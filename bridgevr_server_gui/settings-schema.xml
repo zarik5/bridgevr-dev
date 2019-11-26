@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- Custom schema for generating settings and GUI -->
+<!--
+    Attributes:
+    name: default:"null"
+    id: default:name
+    default: default:"null"
+    advanced:"true","false"; default:"false"
+    optional:"true","false"; default:"false"
+    default-option:"some","none"; default:"none"
+    is-switch:"true","false"; default:"false"
+    default-switch:"enabled","disabled"; default:"disabled"
+    ui:"textbox","updown","slider"; default:"textbox"
+    min,max,step: default:"null"
+-->
+<settings>
+    <section name="connections" advanced="true">
+        <variants name="clients" default="Count">
+            <uint name="Count" id="client_count" default="1" />
+            <string name="WithIp" id="client_with_ip" default="192.168.0.123" />
+        </variants>
+        <uint name="starting_connection_port" default="9944" ui="updown" min="1024" max="65500" />
+    </section>
+    <variants name="latency" default="Automatic">
+        <section name="Automatic">
+            <float name="expected_missed_poses_per_hour" default="10" ui="updown" min="0.1" max="1000" />
+            <float name="expected_missed_frames_per_hour" default="5" ui="updown" min="0.1" max="1000" />
+            <uint name="server_history_mean_lifetime_s" default="5" advanced="true" optional="true" ui="updown" min="1" />
+            <uint name="client_history_mean_lifetime_s" default="10" advanced="true" optional="true" ui="updown" min="1" />
+        </section>
+        <section name="Manual">
+            <uint name="minimum_ms" id="minimum_latency" default="80" ui="updown" min="1" max="1000" />
+        </section>
+    </variants>
+    <variants name="bitrate" default="Manual">
+        <section name="Manual">
+            <float name="mbps" id="manual_bitrate" default="30" ui="updown" min="0.1" max="1000" />
+        </section>
+    </variants>
+    <section name="video">
+        <variants name="frame_size" default="Scale">
+            <float name="Scale" id="frame_scale" default="1" ui="slider" min="0.25" max="2" step="0.05" />
+            <section name="Absolute">
+                <uint name="width" id="frame_width" />
+                <uint name="height" id="frame_height" />
+            </section>
+        </variants>
+        <variants name="encoder" id="video_encoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_video_encoder" default="encodebin" />
+        </variants>
+        <variants name="decoder" id="video_decoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_video_decoder" default="decodebin" />
+        </variants>
+        <section name="foveated_rendering" is-switch="true" default-switch="enabled">
+            <float name="strength" id="foveation_strength" default="2" ui="slider" min="0" max="5" />
+            <float name="vertical_offset" id="foveation_vertical_offset" default="0" ui="slider" min="-0.1" max="0.1" />
+        </section>
+        <variants name="slices" id="frame_slices" default="Count" advanced="true">
+            <uint name="Count" id="slices_count" default="1" ui="slider" min="1" />
+            <section name="Size">
+                <uint name="max_pixels" id="slices_max_size" default="150000" ui="updown" min="1" />
+                <!-- todo: find best pixel count value -->
+            </section>
+        </variants>
+    </section>
+    <section name="audio" is-switch="true">
+        <float name="bitrate_video_audio_balance" default="0.9" ui="slider" min="0" max="1" />
+        <variant name="encoder" id="audio_encoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_audio_encoder" default="encodebin" />
+        </variant>
+        <variant name="decoder" id="audio_decoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_audio_decoder" default="decodebin" />
+        </variant>
+    </section>
+    <section name="microphone" is-switch="true">
+        <variant name="encoder" id="microphone_encoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_microphone_encoder" default="encodebin" />
+        </variant>
+        <variant name="decoder" id="microphone_decoder" default="Gstreamer">
+            <string name="Gstreamer" id="gstreamer_microphone_decoder" default="decodebin" />
+        </variant>
+    </section>
+    <section name="openvr" advanced="true">
+        <uint name="preferred_render_eye_width" default="1280" optional="true" />
+        <uint name="preferred_render_eye_height" default="720" optional="true" />
+        <ignored name="hmd_custom_properties" />
+        <ignored name="controllers_custom_properties" />
+    </section>
+</settings>

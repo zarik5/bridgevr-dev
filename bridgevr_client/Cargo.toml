@@ -1,0 +1,44 @@
+[package]
+name = 'bridgevr_client'
+version = '0.0.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+build = 'build.rs'
+[package.metadata.android]
+label = 'BridgeVR'
+package_name = 'aab.bridgevr.client'
+version_name = '0.0.1'
+version_code = 1
+android_version = 29
+target_sdk_version = 29
+min_sdk_version = 25
+res = 'res'
+build_targets = ['aarch64-linux-android']
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.vr.headtracking'
+version = '1'
+required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.vulkan.level'
+version = '1'
+required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.microphone'
+required = true
+
+[[package.metadata.android.permission]]
+name = 'android.permission.RECORD_AUDIO'
+
+[dependencies]
+chrono = '0.4.9'
+log = '0.4.8'
+fern = '0.5.9'
+ash = '0.29.0'
+
+[dependencies.bridgevr_common]
+path = '../bridgevr_common'
+features = ['vulkan']

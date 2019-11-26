@@ -1,0 +1,19 @@
+[package]
+name = 'nvidia-video-codec-sdk-sys'
+version = '0.9.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+build = 'build.rs'
+
+[lib]
+crate-type = ['rlib']
+
+[features]
+default = []
+encoder = []
+decoder = []
+
+[build-dependencies]
+bindgen = '*'
+cc = '*'

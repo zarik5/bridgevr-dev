@@ -1,0 +1,46 @@
+[package]
+name = 'bridgevr_server'
+version = '0.0.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+build = 'build.rs'
+
+[features]
+default = ['nvenc']
+nvenc = ['nvidia-video-codec-sdk-sys']
+
+[lib]
+crate-type = ['cdylib']
+
+[dependencies]
+chrono = '0.4.9'
+log = '0.4.8'
+fern = '0.5.9'
+libloading = '0.5.2'
+bincode = '1.2.0'
+lazy_static = '1.4.0'
+# gstreamer = '0.14.5'
+
+[dependencies.openvr-driver]
+path = '../openvr-driver'
+
+# [target."cfg(target_os = \"linux\")".dependencies]
+# bridgevr_common = { path = '../bridgevr_common', features = ['vulkan'] }
+# nvidia-video-codec-sdk-sys = { path = '../nvidia-video-codec-sdk-sys', features = ['encoder'], optional = true }
+# gtk = '0.7.0'
+
+[target."cfg(windows)".dependencies]
+bridgevr_common = { path = '../bridgevr_common', features = ['dx11'] }
+nvidia-video-codec-sdk-sys = { path = '../nvidia-video-codec-sdk-sys', features = ['encoder'], optional = true }
+msgbox = '0.4.0'
+
+[target."cfg(target_os = \"macos\")".dependencies]
+bridgevr_common = { path = '../bridgevr_common', features = ['metal'] }
+msgbox = '0.4.0'
+
+[build-dependencies]
+dirs = '2.0.2'
+bindgen = '0.52.0'
+cc = '1.0.47'
+pkg-config = '0.3.17'

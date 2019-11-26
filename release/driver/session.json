@@ -1,0 +1,103 @@
+{
+    "bitrate": 5000000000,
+    "server_present_latency_ns": 16000000,
+    "client_present_latency_ns": 16000000,
+    "clients": [],
+    "settings_cache": {
+        "connections": {
+            "clients": {
+                "_variant": "Count",
+                "Count": 1,
+                "WithIp": "192.168.0.10"
+            },
+            "starting_connection_port": 9944
+        },
+        "latency": {
+            "_variant": "Automatic",
+            "Automatic": {
+                "expected_missed_poses_per_hour": 10,
+                "expected_missed_frames_per_hour": 5,
+                "server_history_mean_lifetime_s": 5,
+                "client_history_mean_lifetime_s": 10
+            },
+            "Manual": {
+                "minimum_ms": 80
+            }
+        },
+        "bitrate": {
+            "_variant": "Manual",
+            "Manual": {
+                "mbps": 30
+            }
+        },
+        "video": {
+            "frame_size": {
+                "_variant": "Scale",
+                "Scale": 1.0,
+                "Absolute": {
+                    "width": 1280,
+                    "height": 720
+                }
+            },
+            "encoder": {
+                "_variant": "Gstreamer",
+                "Gstreamer": "encodebin"
+            },
+            "decoder": {
+                "_variant": "Gstreamer",
+                "Gstreamer": "decodebin"
+            },
+            "foveated_rendering": {
+                "_switch": "enabled",
+                "_enabled": {
+                    "strength": 2,
+                    "vertical_offset": 0
+                }
+            },
+            "slices": {
+                "_variant": "Size",
+                "Count": 1,
+                "Size": {
+                    "max_pixels": 150000
+                }
+            }
+        },
+        "audio": {
+            "_switch": "disabled",
+            "_enabled": {
+                "bitrate_video_audio_balance": 0.9,
+                "encoder": {
+                    "_variant": "Gstreamer",
+                    "Gstreamer": "encodebin"
+                },
+                "decoder": {
+                    "_variant": "Gstreamer",
+                    "Gstreamer": "decodebin"
+                }
+            }
+        },
+        "microphone": {
+            "_switch": "disabled",
+            "_enabled": {
+                "encoder": {
+                    "_variant": "Gstreamer",
+                    "Gstreamer": "encodebin"
+                },
+                "decoder": {
+                    "_variant": "Gstreamer",
+                    "Gstreamer": "decodebin"
+                }
+            }
+        },
+        "openvr": {
+            "preferred_render_eye_width": {
+                "_option": "none",
+                "_some": 1280
+            },
+            "preferred_render_eye_height": {
+                "_option": "none",
+                "_some": 720
+            }
+        }
+    }
+}
