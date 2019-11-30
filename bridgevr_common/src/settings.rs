@@ -1,3 +1,5 @@
+// WARNING: never use usize (see packets.rs)
+
 use crate::StrResult;
 use log::warn;
 use serde::{Deserialize, Serialize};
@@ -162,7 +164,7 @@ pub enum BitrateDesc {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum Clients {
-    Count(usize),
+    Count(u64),
     WithIp(String),
 }
 
@@ -200,8 +202,8 @@ pub struct FoveatedRendering {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum Slices {
-    Count(usize),
-    Size { max_pixels: usize },
+    Count(u64),
+    Size { max_pixels: u64 },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -276,10 +278,8 @@ pub fn load_settings(path: &str) -> StrResult<Settings> {
     // If settings.json is invalid or unavailable I cannot use a default value because for the video
     // codec I need to know the which hardware the client has.
     // serde_json::from_value(value: Value)
-    trace_err!(
-        json::from_str(&trace_err!(fs::read_to_string(path), "Settings")?),
-        "Settings"
-    )
+    const TRACE_CONTEXT: &str = "Settings";
+    trace_err!(json::from_str(&trace_err!(fs::read_to_string(path))?))
 }
 
 pub fn load_session(path: &str) -> Session {
@@ -295,11 +295,9 @@ pub fn load_session(path: &str) -> Session {
 }
 
 pub fn save_session(path: &str, session: &Session) -> StrResult<()> {
-    trace_err!(
-        fs::write(
-            path,
-            trace_err!(json::to_string_pretty(session), "Session")?
-        ),
-        "Session"
-    )
+    const TRACE_CONTEXT: &str = "Session";
+    trace_err!(fs::write(
+        path,
+        trace_err!(json::to_string_pretty(session))?
+    ))
 }

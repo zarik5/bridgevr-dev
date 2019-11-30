@@ -3,28 +3,7 @@ use std::io::{Read, Write};
 
 fn main() {
     let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    // let header_str = "openvr_driver.h";
-    // let modified_openvr_driver_header_path = out_path.join(header_str);
     let include_flag_string = format!("-I{}", out_path.to_string_lossy());
-
-    // Inside "openvr_driver.h" substitute <string> and <vector> with a bindgen friendly "dummy_string.h", "dummy_vector.h"
-    // I could't do this with the C++ preprocessor
-    // let mut openvr_driver_header_content = String::new();
-    // {
-    //     File::open(header_str)
-    //         .expect(header_str)
-    //         .read_to_string(&mut openvr_driver_header_content)
-    //         .expect(header_str);
-    // }
-    // // openvr_driver_header_content = openvr_driver_header_content
-    // //     .replace("#include <string>", r#"#include "dummy_string.h""#)
-    // //     .replace("#include <vector>", r#"#include "dummy_vector.h""#);
-    // {
-    //     File::create(modified_openvr_driver_header_path)
-    //         .expect(header_str)
-    //         .write(openvr_driver_header_content.as_bytes())
-    //         .expect(header_str);
-    // }
 
     if cfg!(windows) {
         cc::Build::new()

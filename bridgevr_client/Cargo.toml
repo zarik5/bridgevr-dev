@@ -5,6 +5,7 @@ authors = ['Riccardo Zaglia <github.com/zarik5>']
 license = 'MIT'
 edition = '2018'
 build = 'build.rs'
+
 [package.metadata.android]
 label = 'BridgeVR'
 package_name = 'aab.bridgevr.client'
@@ -34,7 +35,7 @@ required = true
 name = 'android.permission.RECORD_AUDIO'
 
 [dependencies]
-chrono = '0.4.9'
+chrono = '0.4.10'
 log = '0.4.8'
 fern = '0.5.9'
 ash = '0.29.0'

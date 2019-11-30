@@ -4,17 +4,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-const CONTEXT: &str = "Server Graphics";
-macro_rules! trace_err {
-    ($res:expr $(, $expect:expr)?) => {
-        crate::trace_err!($res, CONTEXT $(, $expect)?)
-    };
-}
-macro_rules! trace_none {
-    ($res:expr $(, $none_message:expr)?) => {
-        crate::trace_none!($res, CONTEXT $(, $none_message)?)
-    };
-}
+const TRACE_CONTEXT: &str = "Server Graphics";
 
 const MAX_SWAP_TEXTURES: usize = 3;
 

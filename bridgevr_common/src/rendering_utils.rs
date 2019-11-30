@@ -42,17 +42,7 @@ use gfx_backend_metal as back;
 
 const GRAPHICS_TIMEOUT: Duration = Duration::from_secs(1);
 
-const CONTEXT: &str = "Rendering Utils";
-macro_rules! trace_err {
-    ($res:expr $(, $expect:expr)?) => {
-        crate::trace_err!($res, CONTEXT $(, $expect)?)
-    };
-}
-macro_rules! trace_none {
-    ($res:expr $(, $none_message:expr)?) => {
-        crate::trace_none!($res, CONTEXT $(, $none_message)?)
-    };
-}
+const TRACE_CONTEXT: &str = "Rendering Utils";
 
 type InstanceImpl = <back::Backend as gfx_hal::Backend>::Instance;
 type PhysicalDeviceImpl = <back::Backend as gfx_hal::Backend>::PhysicalDevice;
@@ -81,10 +71,9 @@ pub enum OperationDesc {
     },
 }
 
-// Graphics 2D abstraction layer
+// Graphics abstraction layer 2D 
 // Expose a higher level API for 2D post-processing using shaders
-// Should be used as an Arc.
-pub struct Graphics2DAbstractionLayer {
+pub struct GraphicsAL2D {
     instance: InstanceImpl,
     physical_device: PhysicalDeviceImpl,
     device: DeviceImpl,
@@ -93,7 +82,7 @@ pub struct Graphics2DAbstractionLayer {
     limits: Limits,
 }
 
-impl Graphics2DAbstractionLayer {
+impl GraphicsAL2D {
     pub fn new(adapter_index: Option<usize>) -> StrResult<Self> {
         let instance = trace_err!(back::Instance::create(BVR_NAME, 1))?;
 
@@ -121,7 +110,7 @@ impl Graphics2DAbstractionLayer {
         let device = gpu.device;
         let queue_group = trace_none!(gpu.queue_groups.pop())?;
 
-        Ok(Self {
+        Ok(GraphicsAL2D {
             instance: instance,
             physical_device,
             device,
@@ -186,16 +175,16 @@ impl Graphics2DAbstractionLayer {
 // }
 
 pub struct Buffer {
-    graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+    graphics_al_2d: Arc<GraphicsAL2D>,
     buffer_handle: ManuallyDrop<BufferImpl>,
     buffer_memory: ManuallyDrop<MemoryImpl>,
 }
 
 impl Buffer {
-    pub fn new<T>(graphics_2d_al: Arc<Graphics2DAbstractionLayer>) -> StrResult<Self> {
-        let dev = &graphics_2d_al.device;
+    pub fn new<T>(graphics_al_2d: Arc<GraphicsAL2D>) -> StrResult<Self> {
+        let dev = &graphics_al_2d.device;
 
-        let non_coherent_alignment = graphics_2d_al.limits.non_coherent_atom_size;
+        let non_coherent_alignment = graphics_al_2d.limits.non_coherent_atom_size;
         let buffer_length = ((size_of::<T>() + non_coherent_alignment - 1)
             / non_coherent_alignment)
             * non_coherent_alignment;
@@ -205,7 +194,7 @@ impl Buffer {
 
         let buffer_requirements = unsafe { dev.get_buffer_requirements(&buffer_handle) };
 
-        let mem_type_id = trace_none!(graphics_2d_al.memory_types.iter().enumerate().position(
+        let mem_type_id = trace_none!(graphics_al_2d.memory_types.iter().enumerate().position(
             |(id, mem_type)| {
                 buffer_requirements.type_mask & (1 << id) != 0
                     && mem_type
@@ -222,7 +211,7 @@ impl Buffer {
         });
 
         Ok(Buffer {
-            graphics_2d_al,
+            graphics_al_2d,
             buffer_handle,
             buffer_memory,
         })
@@ -232,19 +221,19 @@ impl Buffer {
         let data_size = size_of::<T>();
         unsafe {
             let mapping = trace_err!(self
-                .graphics_2d_al
+                .graphics_al_2d
                 .device
                 .map_memory(&self.buffer_memory, 0..data_size as _))?;
 
             ptr::copy_nonoverlapping(data as *const _ as *const u8, mapping, data_size);
 
             // do not early return if flush fails because the buffer memory must be unmapped
-            self.graphics_2d_al
+            self.graphics_al_2d
                 .device
                 .flush_mapped_memory_ranges(iter::once((&*self.buffer_memory, 0..data_size as _)))
                 .map_err(|e| error!("[Graphics] Buffer map flush: {}", e))
                 .ok();
-            self.graphics_2d_al.device.unmap_memory(&self.buffer_memory);
+            self.graphics_al_2d.device.unmap_memory(&self.buffer_memory);
         }
         Ok(())
     }
@@ -260,7 +249,7 @@ impl Drop for Buffer {
 }
 
 pub struct Texture {
-    graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+    graphics_al_2d: Arc<GraphicsAL2D>,
     image_handle: ManuallyDrop<ImageImpl>,
     image_memory: ManuallyDrop<MemoryImpl>,
     image_view: ManuallyDrop<ImageViewImpl>,
@@ -269,14 +258,14 @@ pub struct Texture {
 impl Texture {
     fn create_image_memory_view(
         mut image_handle: &mut ManuallyDrop<ImageImpl>,
-        graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+        graphics_al_2d: Arc<GraphicsAL2D>,
         format: Format,
     ) -> StrResult<(ManuallyDrop<MemoryImpl>, ManuallyDrop<ImageViewImpl>)> {
-        let dev = &graphics_2d_al.device;
+        let dev = &graphics_al_2d.device;
 
         let image_requirements = unsafe { dev.get_image_requirements(&image_handle) };
 
-        let mem_type_id = trace_none!(graphics_2d_al.memory_types.iter().enumerate().position(
+        let mem_type_id = trace_none!(graphics_al_2d.memory_types.iter().enumerate().position(
             |(id, memory_type)| {
                 image_requirements.type_mask & (1 << id) != 0
                     && memory_type
@@ -310,12 +299,12 @@ impl Texture {
     }
 
     pub fn new(
-        graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+        graphics_al_2d: Arc<GraphicsAL2D>,
         width: u32,
         height: u32,
         format: Format,
     ) -> StrResult<Self> {
-        let dev = &graphics_2d_al.device;
+        let dev = &graphics_al_2d.device;
 
         let kind = Kind::D2(width, height, /*layers*/ 1, /*samples*/ 1);
         //todo check usage bits
@@ -333,10 +322,10 @@ impl Texture {
         })?);
 
         let (image_memory, image_view) =
-            Texture::create_image_memory_view(&mut image_handle, graphics_2d_al.clone(), format)?;
+            Texture::create_image_memory_view(&mut image_handle, graphics_al_2d.clone(), format)?;
 
         Ok(Self {
-            graphics_2d_al,
+            graphics_al_2d,
             image_handle,
             image_memory,
             image_view,
@@ -346,7 +335,7 @@ impl Texture {
     #[cfg(feature = "vulkan")]
     pub fn from_ptr(
         ptr: u64,
-        graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+        graphics_al_2d: Arc<GraphicsAL2D>,
         width: u32,
         height: u32,
         depth: u32,
@@ -376,10 +365,10 @@ impl Texture {
         let mut image_handle = ManuallyDrop::new(unsafe { transmute(image_mock) });
 
         let (image_memory, image_view) =
-            Texture::create_image_memory_view(&mut image_handle, graphics_2d_al.clone(), format)?;
+            Texture::create_image_memory_view(&mut image_handle, graphics_al_2d.clone(), format)?;
 
         Ok(Self {
-            graphics_2d_al,
+            graphics_al_2d,
             image_handle,
             image_memory,
             image_view,
@@ -445,9 +434,9 @@ impl Drop for Texture {
 // including Graphics2DAbstractionLayer inside Texture ensures that image is destroyed before the device
 // impl Drop for Texture {
 //     fn drop(&mut self) {
-//         if self.graphics_2d_al.device.wait_idle().is_ok() {
+//         if self.graphics_al_2d.device.wait_idle().is_ok() {
 //             unsafe {
-//                 self.graphics_2d_al
+//                 self.graphics_al_2d
 //                     .device
 //                     .destroy_image(ManuallyDrop::into_inner(ptr::read(&mut self.image)));
 //                 // todo: use ManuallyDrop::read/take when stabilized
@@ -463,7 +452,7 @@ impl Drop for Texture {
 // }
 
 pub struct OperationBuffer {
-    graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+    graphics_al_2d: Arc<GraphicsAL2D>,
     // command_pool: ManuallyDrop<CommandPool<back::Backend, Graphics>>,
     // command_buffer: ManuallyDrop<CommandBuffer<back::Backend, Graphics, MultiShot>>,
     // render_passes: Vec<<back::Backend as gfx_hal::Backend>::RenderPass>,
@@ -473,14 +462,14 @@ pub struct OperationBuffer {
 
 impl OperationBuffer {
     pub fn new(
-        graphics_2d_al: Arc<Graphics2DAbstractionLayer>,
+        graphics_al_2d: Arc<GraphicsAL2D>,
         operation_descs: Vec<OperationDesc>,
     ) -> StrResult<OperationBuffer> {
-        let dev = &graphics_2d_al.device;
+        let dev = &graphics_al_2d.device;
 
         let mut command_pool = ManuallyDrop::new(trace_err!(unsafe {
             dev.create_command_pool(
-                graphics_2d_al.queue_group.family,
+                graphics_al_2d.queue_group.family,
                 CommandPoolCreateFlags::RESET_INDIVIDUAL,
             )
         })?);
@@ -558,11 +547,11 @@ impl OperationBuffer {
         // command_buffer.begin_render_pass_inline (
         // )
 
-        // let fence = graphics_2d_al
+        // let fence = graphics_al_2d
         //     .device
         //     .create_fence(/*signaled*/ true)
         //     .unwrap();
-        // let semaphore = graphics_2d_al.device.create_semaphore().unwrap();
+        // let semaphore = graphics_al_2d.device.create_semaphore().unwrap();
 
         // let render_pass = {
         //     let color_attachment = Attachment {
@@ -584,7 +573,7 @@ impl OperationBuffer {
         //     };
 
         //     unsafe {
-        //         ok_or_panic!(graphics_2d_al.device.create_render_pass(
+        //         ok_or_panic!(graphics_al_2d.device.create_render_pass(
         //             &[color_attachment],
         //             &[subpass],
         //             &[/*subpass dependency*/],
@@ -605,7 +594,7 @@ impl OperationBuffer {
         //     },
         // ), "Image view");
 
-        // let framebuffer = ok_or_panic!(graphics_2d_al.device.create_framebuffer(
+        // let framebuffer = ok_or_panic!(graphics_al_2d.device.create_framebuffer(
         //     &render_pass,
         //     vec![image_view],
         //     Extent {
@@ -618,7 +607,7 @@ impl OperationBuffer {
         panic!();
 
         // Self {
-        //     graphics_2d_al,
+        //     graphics_al_2d,
         //     command_pool,
         //     command_buffer,
         //     fences,
@@ -634,15 +623,15 @@ impl OperationBuffer {
 
 // impl Drop for OperationBuffer {
 //     fn drop(&mut self) {
-//         if self.graphics_2d_al.device.wait_idle().is_ok() {
+//         if self.graphics_al_2d.device.wait_idle().is_ok() {
 //             unsafe {
 //                 // for f in self.fences.drain(..) {
-//                 //     self.graphics_2d_al.device.destroy_fence(f);
+//                 //     self.graphics_al_2d.device.destroy_fence(f);
 //                 // }
 
 //                 // let command_buffer = ManuallyDrop::into_inner(ptr::read(&mut self.command_buffer));
 
-//                 // self.graphics_2d_al.device.destroy_command_pool(
+//                 // self.graphics_al_2d.device.destroy_command_pool(
 //                 //     ManuallyDrop::into_inner(ptr::read(&mut self.command_pool)).into_raw(),
 //                 // );
 //             }

@@ -15,28 +15,28 @@ More information on the related [wiki page](todo link)
 
 |         Operative system         | Client | Server |
 | :------------------------------: | :----: | :----: |
-|       Windows 10 (AMD GPU)       |   ?    |   ?    |
-|     Windows 10 (Nvidia GPU)      |   ?    |   ✔️   |
-|       Windows 7 (AMD GPU)        |   ?    |   ?    |
-|      Windows 7 (Nvidia GPU)      |   ?    |   ?    |
+|       Windows 10 (AMD GPU)       |   ❗    |   ?    |
+|     Windows 10 (Nvidia GPU)      |   ❗    |   ✔️   |
+|       Windows 7 (AMD GPU)        |   ❌    |   ?    |
+|      Windows 7 (Nvidia GPU)      |   ❌    |   ?    |
 |      Ubuntu 19.10 (AMD GPU)      |   ❗    |   ?    |
 |    Ubuntu 19.10 (Nvidia GPU)     |   ❗    |   ✔️   |
 |  Other Linux distros (AMD GPU)   |   ❗    |   ?    |
 | Other Linux distros (Nvidia GPU) |   ❗    |   ?    |
 |              macOS               |   ❌    |   ❗    |
 
-|           VR headset           |    Client    |
-| :----------------------------: | :----------: |
-|          Oculus Quest          |      ✔️      |
-|           Oculus Go            |     ?[2]     |
-|             GearVR             |      ❗       |
-|      Daydream smartphones      |      ❌       |
-| Windows Mixed Reality headsets |      ❗       |
-|     Oculus wired headsets      |      ❗       |
-|         Varjo headsets         |      ❗       |
-| Vive and other wired headsets  | ❌ (Linux: ❗) |
+|           VR headset           |   Client    |
+| :----------------------------: | :---------: |
+|          Oculus Quest          |     ✔️      |
+|           Oculus Go            |    ?[2]     |
+|             GearVR             |      ❗      |
+|      Daydream smartphones      |      ❌      |
+| Windows Mixed Reality headsets |      ❗      |
+|     Oculus wired headsets      | ❗ (Windows) |
+|         Varjo headsets         |      ❗      |
+| Vive and other wired headsets  |  ❗ (Linux)  |
 
-✔️: Supported (for some combination of OS/hardware) 
+✔️: Supported (for some combination of OS/hardware)  
 ?: Unknown support status (require testing)  
 ❗: Could be supported with relatively little work  
 ❌: Could be supported with major work  
@@ -51,6 +51,8 @@ If you find that your OS/hardware is not supported you can propose support openi
 
 * Linux support
 * Automatic video stream latency and bitrate adjustment
+* Sliced encoding
+* Fixed foveated rendering
 
 ## Upcoming features
 

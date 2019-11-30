@@ -1,64 +1,68 @@
-mod logging_backend;
+extern crate cpal;
+extern crate anyhow;
 
-// use gst::prelude::*;
-// use gstreamer as gst;
-use serde::*;
-use std::marker::PhantomData;
-use std::sync::*;
+use cpal::traits::{DeviceTrait, EventLoopTrait, HostTrait};
+use cpal::HostId;
 
-// #[derive(Serialize, Deserialize, Debug, Default)]
-#[repr(C)]
-#[derive(zerocopy::FromBytes)]
-struct MyData<'a> {
-    b: &'a [u8],
-    a: u32,
-}
+fn main() -> Result<(), anyhow::Error> {
+    // let host = cpal::default_host();
+    // // let output_device = host.default_output_device().expect("failed to get default input device");
+    // println!("{:?}", host.default_output_device());
 
-fn main() {
+    println!("Supported hosts:\n  {:?}", cpal::ALL_HOSTS);
+    let available_hosts = cpal::available_hosts();
+    println!("Available hosts:\n  {:?}", available_hosts);
 
-    let bt = backtrace::Backtrace::new();
+    for host_id in available_hosts {
+        println!("{}", host_id.name());
+        let host = cpal::host_from_id(host_id)?;
+        let default_in = host.default_input_device().map(|e| e.name().unwrap());
+        let default_out = host.default_output_device().map(|e| e.name().unwrap());
+        println!("  Default Input Device:\n    {:?}", default_in);
+        println!("  Default Output Device:\n    {:?}", default_out);
 
+        let devices = host.devices()?;
+        println!("  Devices: ");
+        for (device_index, device) in devices.enumerate() {
+            println!("  {}. \"{}\"", device_index + 1, device.name()?);
 
-    println!("{:?}", bt);
+            // Input formats
+            if let Ok(fmt) = device.default_input_format() {
+                println!("    Default input stream format:\n      {:?}", fmt);
+            }
+            let mut input_formats = match device.supported_input_formats() {
+                Ok(f) => f.peekable(),
+                Err(e) => {
+                    println!("Error: {:?}", e);
+                    continue;
+                },
+            };
+            if input_formats.peek().is_some() {
+                println!("    All supported input stream formats:");
+                for (format_index, format) in input_formats.enumerate() {
+                    println!("      {}.{}. {:?}", device_index + 1, format_index + 1, format);
+                }
+            }
 
+            // Output formats
+            if let Ok(fmt) = device.default_output_format() {
+                println!("    Default output stream format:\n      {:?}", fmt);
+            }
+            let mut output_formats = match device.supported_output_formats() {
+                Ok(f) => f.peekable(),
+                Err(e) => {
+                    println!("Error: {:?}", e);
+                    continue;
+                },
+            };
+            if output_formats.peek().is_some() {
+                println!("    All supported output stream formats:");
+                for (format_index, format) in output_formats.enumerate() {
+                    println!("      {}.{}. {:?}", device_index + 1, format_index + 1, format);
+                }
+            }
+        }
+    }
 
-    // logging_backend::init_logging();
-    // pkg_config::probe_library("gstreamer-1.0").unwrap();
-
-    // gst::init().unwrap();
-
-    // let pipeline_desc = "playbin uri=https://www.freedesktop.org/software/gstreamer-sdk/data/media/sintel_trailer-480p.webm";
-    // let pipeline_desc = r"videotestsrc pattern=0 ! glupload ! video/x-raw(memory:GLMemory) !  ! autovideosink";
-    // // 0 8 10 11 12 13 18 21 24
-
-    // let pipeline = gst::parse_launch(pipeline_desc).unwrap();
-
-    // pipeline
-    //     .set_state(gst::State::Playing)
-    //     .expect("Unable to set the pipeline to the `Playing` state");
-
-    // // Wait until error or EOS
-    // let bus = pipeline.get_bus().unwrap();
-    // for msg in bus.iter_timed(gst::CLOCK_TIME_NONE) {
-    //     use gst::MessageView;
-
-    //     match msg.view() {
-    //         MessageView::Eos(..) => break,
-    //         MessageView::Error(err) => {
-    //             println!(
-    //                 "Error from {:?}: {} ({:?})",
-    //                 err.get_src().map(|s| s.get_path_string()),
-    //                 err.get_error(),
-    //                 err.get_debug()
-    //             );
-    //             break;
-    //         }
-    //         _ => (),
-    //     }
-    // }
-
-    // // Shutdown pipeline
-    // pipeline
-    //     .set_state(gst::State::Null)
-    //     .expect("Unable to set the pipeline to the `Null` state");
+    Ok(())
 }

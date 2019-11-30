@@ -6,23 +6,9 @@ license = 'MIT'
 edition = '2018'
 
 [dependencies]
-chrono = '0.4.9'
-log = '0.4.8'
-fern = '0.5.9'
-msgbox = '0.4.0'
-pkg-config = '0.3.17'
-serde = '1.0.102'
-bincode = '1.2.0'
-lazy_static = '*'
-zerocopy = '*'
+cpal = { git = "https://github.com/RustAudio/cpal" }
+anyhow = "1.0.23"
+bridgevr_common = { path = '../bridgevr_common', features = ['vulkan'] }
 
-# [dependencies.gstreamer]
-# version = '0.14.5'
-# features = ['v1_16']
-
-[dependencies.bridgevr_common]
-path = '../bridgevr_common'
-features = ['vulkan']
-
-[build-dependencies]
-pkg-config = '*'
+[target."cfg(windows)".dependencies]
+# cpal = { version = "0.10.0", features = ['asio]']

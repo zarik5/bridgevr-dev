@@ -14,17 +14,7 @@ use openvr_backend::*;
 use std::{collections::HashMap, ffi::*, panic, sync::*};
 use video_encoder::*;
 
-const CONTEXT: &str = "Server";
-macro_rules! trace_err {
-    ($res:expr $(, $expect:expr)?) => {
-        crate::trace_err!($res, CONTEXT $(, $expect)?)
-    };
-}
-macro_rules! trace_none {
-    ($res:expr $(, $none_message:expr)?) => {
-        crate::trace_none!($res, CONTEXT $(, $none_message)?)
-    };
-}
+const TRACE_CONTEXT: &str = "Server";
 
 enum ClientBackend {
     Openvr(OpenvrClient), // todo: add OpenXR device plugin when it will be available

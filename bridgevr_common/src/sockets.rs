@@ -20,12 +20,7 @@ const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 123);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 const PACKET_TIMEOUT: Duration = Duration::from_secs(1);
 
-const CONTEXT: &str = "Sockets";
-macro_rules! trace_err {
-    ($res:expr $(, $expect:expr)?) => {
-        crate::trace_err!($res, CONTEXT $(, $expect)?)
-    };
-}
+const TRACE_CONTEXT: &str = "Sockets";
 
 enum ThreadMessage<T> {
     Data(T),
@@ -85,7 +80,7 @@ pub struct BufferReceiverSocket<K> {
     thread_message_sender: mpsc::Sender<ThreadMessage<(K, Arc<Mutex<[u8]>>)>>,
 }
 
-impl<K: Clone> BufferReceiverSocket<K> {
+impl<K: Copy> BufferReceiverSocket<K> {
     pub fn enqueue_buffer(&mut self, key: K, buffer: Arc<Mutex<[u8]>>) -> Result<(), K> {
         self.thread_message_sender
             .send(ThreadMessage::Data((key.clone(), buffer)))
@@ -204,9 +199,9 @@ impl<SM, K: Send + 'static> ConnectionManager<SM, K> {
         if thread_handles_ref.is_none() {
             let (thread_message_sender, thread_message_receiver) = mpsc::channel();
 
-            let join_handle = {
+            let join_handle = thread::spawn({
                 let socket = socket_ref.clone();
-                thread::spawn(move || -> StrResult<()> {
+                move || -> StrResult<()> {
                     let mut try_receive = |key: &K, buffer: &Arc<Mutex<[u8]>>| -> Result<(), ()> {
                         let mut buffer = buffer.lock().unwrap();
                         let packet_size = socket.recv(&mut buffer).map_err(|err| {
@@ -249,8 +244,8 @@ impl<SM, K: Send + 'static> ConnectionManager<SM, K> {
                     }
 
                     Ok(())
-                })
-            };
+                }
+            });
 
             *thread_handles_ref = Some(ThreadHandles {
                 join_handle,
@@ -288,11 +283,11 @@ fn create_connection_socket<SM, R: DeserializeOwned + 'static, K>(
 
     let (udp_thread_message_sender, udp_thread_message_receiver) = mpsc::channel();
 
-    let udp_join_handle = {
+    let udp_join_handle = thread::spawn({
         let message_received_callback = message_received_callback.clone();
         let udp_message_socket = udp_message_socket.clone();
         let bincode_config = bincode_config.clone();
-        thread::spawn(move || -> StrResult<()> {
+        move || -> StrResult<()> {
             let mut packet_buffer = [0; MAX_PACKET_SIZE_BYTES];
 
             let mut try_receive = || -> Result<(), ()> {
@@ -320,17 +315,17 @@ fn create_connection_socket<SM, R: DeserializeOwned + 'static, K>(
             }
 
             Ok(())
-        })
-    };
+        }
+    });
 
     let (tcp_thread_message_sender, tcp_thread_message_receiver) = mpsc::channel();
 
-    let tcp_join_handle = {
+    let tcp_join_handle = thread::spawn({
         let message_received_callback = message_received_callback.clone();
         let tcp_message_socket = tcp_message_socket.clone();
         let bincode_config = bincode_config.clone();
         let shutdown_callback = shutdown_callback.clone();
-        thread::spawn(move || -> StrResult<()> {
+        move || -> StrResult<()> {
             loop {
                 match bincode_config.deserialize_from(&*tcp_message_socket) {
                     Ok(message) => (&mut *message_received_callback.lock().unwrap())(message),
@@ -347,8 +342,8 @@ fn create_connection_socket<SM, R: DeserializeOwned + 'static, K>(
                 }
             }
             Ok(())
-        })
-    };
+        }
+    });
 
     Ok(ConnectionManager {
         peer_ip,
@@ -396,9 +391,9 @@ impl HandshakeSocket {
         MRC: FnMut(ClientMessage) + Send + 'static,
     {
         let (thread_message_sender, thread_message_receiver) = mpsc::channel();
-        let join_handle = {
+        let join_handle = thread::spawn({
             let thread_message_sender = thread_message_sender.clone();
-            thread::spawn(move || -> StrResult<()> {
+            move || -> StrResult<()> {
                 let mut connected_clients_count = 0;
                 let max_clients = match connections.clients {
                     Clients::Count(count) => count as i32,
@@ -478,8 +473,8 @@ impl HandshakeSocket {
                 }
 
                 Ok(())
-            })
-        };
+            }
+        });
 
         Self {
             thread_handles: Some(ThreadHandles {
@@ -497,9 +492,9 @@ impl HandshakeSocket {
         message_receive_callback: impl FnMut(ServerMessage) + Send + 'static,
     ) -> Self {
         let (thread_message_sender, thread_message_receiver) = mpsc::channel();
-        let join_handle = {
+        let join_handle = thread::spawn({
             let thread_message_sender = thread_message_sender.clone();
-            thread::spawn(move || -> StrResult<()> {
+            move || -> StrResult<()> {
                 let message_receive_callback = Arc::new(Mutex::new(message_receive_callback));
 
                 let multicaster =
@@ -564,8 +559,8 @@ impl HandshakeSocket {
                 }
 
                 Ok(())
-            })
-        };
+            }
+        });
 
         Self {
             thread_handles: Some(ThreadHandles {

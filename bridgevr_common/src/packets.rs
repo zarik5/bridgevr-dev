@@ -1,8 +1,12 @@
+// WARNING: never use usize in in packets because its size is hardware dependent and deserialization
+// can fail
+
 use crate::settings::*;
 use bitflags::bitflags;
 use serde::*;
+use std::hash::*;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq)]
 pub struct Pose(pub [f32; 16]);
 
 #[derive(Serialize, Deserialize, Clone)]

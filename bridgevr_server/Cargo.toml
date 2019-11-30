@@ -14,7 +14,7 @@ nvenc = ['nvidia-video-codec-sdk-sys']
 crate-type = ['cdylib']
 
 [dependencies]
-chrono = '0.4.9'
+chrono = '0.4.10'
 log = '0.4.8'
 fern = '0.5.9'
 libloading = '0.5.2'

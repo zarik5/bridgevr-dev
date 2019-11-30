@@ -6,7 +6,7 @@ use std::time::*;
 const MAX_LATENCY: Duration = Duration::from_millis(500);
 
 fn inverse_q_of_probability(misses_per_sec: f32, fps: f32) -> f32 {
-    let miss_probability = misses_per_sec * fps;
+    let miss_probability = misses_per_sec / fps;
     // Q function: https://en.wikipedia.org/wiki/Q-function
     // miss prob = Q(target_latency / stddev)
     // Q^-1(miss prob) = sqrt(2) * erfc^-1(2 * miss prob)
