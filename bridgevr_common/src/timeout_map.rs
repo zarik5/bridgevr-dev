@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::*;
 
-pub struct TimedEntry<K, V> {
+struct TimedEntry<K, V> {
     key: K,
     value: V,
     timestamp: Instant,
@@ -43,7 +43,7 @@ impl<K, V> TimeoutMap<K, V> {
             .buffer
             .iter()
             .enumerate()
-            .filter(|(_, TimedEntry { timestamp, .. })| *timestamp > max_time)
+            .filter(|(_, entry)| entry.timestamp > max_time)
             .map(|(i, _)| i)
             .collect();
 
@@ -51,6 +51,14 @@ impl<K, V> TimeoutMap<K, V> {
             .iter()
             .map(|i| self.buffer.remove(*i).unwrap().value)
             .collect()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item=(&K, &V)> {
+        self.buffer.iter().map(|entry| (&entry.key, &entry.value))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item=&K> {
+        self.buffer.iter().map(|entry| &entry.key)
     }
 }
 
@@ -61,12 +69,12 @@ impl<K: PartialEq, V> TimeoutMap<K, V> {
             .buffer
             .iter()
             .enumerate()
-            .find(|(_, TimedEntry { key: k, .. })| *k == *key);
+            .find(|(_, entry)| entry.key == *key);
 
         if let Some((idx, _)) = entry_ref {
             self.buffer
                 .remove(idx)
-                .map(|TimedEntry { key, value, .. }| (key, value))
+                .map(|entry| (entry.key, entry.value))
         } else {
             None
         }
