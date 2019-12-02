@@ -163,14 +163,8 @@ pub enum BitrateDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum Clients {
-    Count(u64),
-    WithIp(String),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Connections {
-    pub clients: Clients,
+pub struct ConnectionDesc {
+    pub client_ip: Option<String>,
     pub starting_data_port: u16,
 }
 
@@ -207,7 +201,7 @@ pub enum Slices {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Video {
+pub struct VideoDesc {
     pub frame_size: FrameSize,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
@@ -216,14 +210,14 @@ pub struct Video {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Audio {
+pub struct AudioDesc {
     pub bitrate_video_audio_balance: f32,
     pub encoder: AudioEncoderDesc,
     pub decoder: AudioDecoderDesc,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct Microphone {
+pub struct MicrophoneDesc {
     pub encoder: AudioEncoderDesc,
     pub decoder: AudioDecoderDesc,
 }
@@ -255,12 +249,12 @@ pub struct OpenvrProps {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
-    pub connections: Connections,
+    pub connection: ConnectionDesc,
     pub latency: LatencyDesc,
     pub bitrate: BitrateDesc,
-    pub video: Video,
-    pub audio: Switch<Audio>,
-    pub microphone: Switch<Microphone>,
+    pub video: VideoDesc,
+    pub audio: Switch<AudioDesc>,
+    pub microphone: Switch<MicrophoneDesc>,
     pub openvr: OpenvrProps,
 }
 

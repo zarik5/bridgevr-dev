@@ -55,7 +55,7 @@ impl<K, V> TimeoutMap<K, V> {
 }
 
 impl<K: PartialEq, V> TimeoutMap<K, V> {
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove(&mut self, key: &K) -> Option<(K, V)> {
         // front to back iterator
         let entry_ref = self
             .buffer
@@ -66,7 +66,7 @@ impl<K: PartialEq, V> TimeoutMap<K, V> {
         if let Some((idx, _)) = entry_ref {
             self.buffer
                 .remove(idx)
-                .map(|TimedEntry { value, .. }| value)
+                .map(|TimedEntry { key, value, .. }| (key, value))
         } else {
             None
         }

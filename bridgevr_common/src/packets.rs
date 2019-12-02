@@ -109,6 +109,7 @@ pub struct ClientStatistics {}
 
 #[derive(Serialize, Deserialize)]
 pub struct ClientHandshakePacket {
+    pub client_version: u32,
     pub native_eye_width: u32,
     pub native_eye_height: u32,
     pub fov: [Fov; 2],
@@ -119,6 +120,7 @@ pub struct ClientHandshakePacket {
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerHandshakePacket {
+    pub server_version: u32,
     pub settings: Settings,
     pub target_eye_width: u32,
     pub target_eye_height: u32,
@@ -145,13 +147,9 @@ pub enum ClientMessage {
 }
 
 pub struct VideoPacketHeader {
-    pub frame_idx: u64,
-    pub sub_slice_idx: u8,
-    pub sub_slice_count: u8,
+    pub sub_nal_idx: u8,
+    pub sub_nal_count: u8,
 }
 
-pub struct AudioPacketHeader {
-    pub sample_idx: u64,
-    pub sub_sample_idx: u8,
-    pub sub_sample_count: u8,
-}
+// audio packets can be subdiveded indefinitely, no metadata required
+// pub struct AudioPacketHeader {}

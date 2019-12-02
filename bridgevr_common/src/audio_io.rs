@@ -1,4 +1,4 @@
-use crate::{ ring_buffer::*, *};
+use crate::{ring_buffer::*, *};
 use byteorder::*;
 use cpal::traits::{DeviceTrait, EventLoopTrait, HostTrait};
 use cpal::*;
@@ -170,10 +170,10 @@ impl AudioPlayer {
 
     pub fn start_playback(
         device_idx: Option<u64>,
-        mut buffer_consumer: KeyedConsumer<u64, (Box<[u8]>, u64)>,
+        mut buffer_consumer: KeyedConsumer<(Box<[u8]>, u64), u64>,
     ) -> StrResult<AudioPlayer> {
-        let mut buffer_idx = 0u64;
-        let mut sample_buffer = VecDeque::<f32>::new();
+        let mut buffer_idx = 0;
+        let mut sample_buffer = VecDeque::new();
         let session = trace_err!(AudioSession::start(
             device_idx,
             AudioMode::Output,
@@ -203,6 +203,7 @@ impl AudioPlayer {
                                             *byte_count,
                                             &mut sample_buffer,
                                         );
+                                        Ok(())
                                     },
                                 );
                                 if res.is_ok() {
@@ -216,7 +217,9 @@ impl AudioPlayer {
                                                 *byte_count,
                                                 &mut sample_buffer,
                                             );
+                                            // todo: check buffer_idx is not a copy
                                             buffer_idx = idx + 1;
+                                            Ok(())
                                         },
                                     );
                                     if res.is_err() {

@@ -11,6 +11,7 @@ pub mod rendering_utils;
 pub mod ring_buffer;
 pub mod settings;
 pub mod sockets;
+pub mod thread_loop;
 pub mod timeout_map;
 
 // pub mod gstreamer;

@@ -3,8 +3,24 @@ pub type StrResult<T> = std::result::Result<T, String>;
 fn default_display_error_fn(_: &str) {}
 pub static mut _DISPLAY_ERROR_CB: fn(&str) = default_display_error_fn;
 
+#[macro_export]
+macro_rules! display_err_str {
+    ($fmt:expr $(, $args:expr)*) => {{
+        log::error!($fmt $(, $args)*);
+        unsafe { $crate::logging::_DISPLAY_ERROR_CB(&format!($fmt $(, $args)*)) };
+    }};
+}
+
 pub fn set_display_error_fn(cb: fn(&str)) {
     unsafe { _DISPLAY_ERROR_CB = cb };
+    std::panic::set_hook(Box::new(|panic_info| {
+        let message = panic_info.payload().downcast_ref::<&str>().unwrap_or(&"Unavailable");
+        display_err_str!(
+            "BridgeVR panicked. This is a bug.\nMessage: {:?}\nBacktrace:\n{:?}",
+            message,
+            backtrace::Backtrace::new()
+        )
+    }))
 }
 
 pub fn error_format(message: &str, file_name: &str, line: u32) -> String {
@@ -13,10 +29,10 @@ pub fn error_format(message: &str, file_name: &str, line: u32) -> String {
 
 #[macro_export]
 macro_rules! trace_err {
-    ($res:expr $(, $expect:expr)?) => {
+    ($res:expr $(, $expect_fmt:expr $(, $args:expr)*)?) => {
         $res.map_err(|e| {
-            String::from(format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!()))
-                $(+ &format!(", {}", $expect))? +
+            format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!())
+                $(+ ", " + &format!($expect_fmt $(, $args)*))? +
                 &format!(":\n{:?}", e)
         })
     };
@@ -24,10 +40,10 @@ macro_rules! trace_err {
 
 #[macro_export]
 macro_rules! trace_none {
-    ($res:expr $(, $none_message:expr)?) => {
+    ($res:expr $(, $none_message_fmt:expr $(, $args:expr)*)?) => {
         $res.ok_or_else(|| {
-            String::from(format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!()))
-                $(+ ", " + $none_message)?
+            format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!())
+                $(+ ", " + &format!($none_message_fmt $(, $args)*))?
         })
     };
 }
