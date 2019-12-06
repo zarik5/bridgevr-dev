@@ -1,12 +1,12 @@
-use crate::{ring_buffer::*, *};
+use crate::{ring_buffer::*, sockets::*, *};
 use byteorder::*;
-use cpal::traits::{DeviceTrait, EventLoopTrait, HostTrait};
-use cpal::*;
-use log::error;
-use log::info;
-use std::collections::VecDeque;
-use std::time::Duration;
-use std::{sync::*, *};
+use cpal::{
+    traits::{DeviceTrait, EventLoopTrait, HostTrait},
+    *,
+};
+use log::{error, info};
+use safe_transmute::*;
+use std::{cmp::min, collections::VecDeque, sync::*, time::Duration, *};
 
 const TRACE_CONTEXT: &str = "Audio IO";
 
@@ -51,7 +51,7 @@ impl AudioSession {
                     s + &format!(
                         " {{ {}: {} }}",
                         i,
-                        dev.name().unwrap_or(String::from("Unknown"))
+                        dev.name().unwrap_or_else(|_| "Unknown".into())
                     )
                 });
         let io_str = match mode {
@@ -129,7 +129,7 @@ impl AudioRecorder {
     pub fn start_recording(
         device_idx: Option<u64>,
         loopback: bool,
-        mut samples_received_callback: impl FnMut(&[f32]) + Send + 'static,
+        mut buffer_producer: Producer<SenderData>,
     ) -> StrResult<AudioRecorder> {
         let mode = if loopback {
             AudioMode::Loopback
@@ -137,12 +137,36 @@ impl AudioRecorder {
             AudioMode::Input
         };
 
+        for _ in 0..3 {
+            buffer_producer.add(SenderData {
+                packet: vec![0; MAX_PACKET_SIZE_BYTES],
+                data_offset: get_data_offset(&()),
+                data_size: 0,
+            });
+        }
+
+        let mut buffer_index = 0;
+
         let session = trace_err!(AudioSession::start(device_idx, mode, move |io_data| {
             match io_data {
                 StreamData::Input {
                     buffer: UnknownTypeInputBuffer::F32(samples),
                 } => {
-                    samples_received_callback(&samples);
+                    let res = buffer_producer.fill(TIMEOUT, |data| {
+                        serialize_indexed_header_into(&mut data.packet, buffer_index, &()).unwrap();
+
+                        let samples_bytes = guarded_transmute_to_bytes_pod_many(&samples[..]);
+                        data.data_size = samples_bytes.len();
+
+                        (&mut data.packet[data.data_offset..(data.data_offset + data.data_size)])
+                            .copy_from_slice(samples_bytes);
+
+                        Ok(())
+                    });
+
+                    if res.is_ok() {
+                        buffer_index += 1;
+                    }
                 }
                 _ => error!("[Audio recorder] Invalid format"),
             }
@@ -161,16 +185,16 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    fn copy_audio_buffer(input: &Box<[u8]>, byte_count: u64, output: &mut VecDeque<f32>) {
+    fn copy_audio_buffer(input: &[u8], byte_count: usize, output: &mut VecDeque<f32>) {
         // todo: use from_le_bytes() when is stabilized #60446
-        for chunk in input.chunks_exact(4).take(byte_count as usize / 4) {
+        for chunk in input.chunks_exact(4).take(byte_count / 4) {
             output.push_back(LittleEndian::read_f32(chunk));
         }
     }
 
     pub fn start_playback(
         device_idx: Option<u64>,
-        mut buffer_consumer: KeyedConsumer<(Box<[u8]>, u64), u64>,
+        mut buffer_consumer: KeyedConsumer<ReceiverData<()>, u64>,
     ) -> StrResult<AudioPlayer> {
         let mut buffer_idx = 0;
         let mut sample_buffer = VecDeque::new();
@@ -185,22 +209,20 @@ impl AudioPlayer {
                         let mut sample_idx = 0;
                         // todo: optimize code?
                         while sample_idx < samples.len() {
-                            while sample_idx < samples.len() {
-                                if let Some(sample) = sample_buffer.pop_front() {
-                                    samples[sample_idx] = sample;
-                                    sample_idx += 1;
-                                } else {
-                                    break;
-                                }
-                            }
+                            let samples_to_copy = min(samples.len(), sample_buffer.len());
+                            samples[sample_idx..(sample_idx + samples_to_copy)]
+                                .copy_from_slice(sample_buffer.as_slices().0);
+                            sample_buffer.drain(0..samples_to_copy);
+                            sample_idx += samples_to_copy;
+
                             if sample_idx < samples.len() {
                                 let res = buffer_consumer.consume(
                                     &buffer_idx,
                                     Duration::from_secs(0),
-                                    |(packet_buffer, byte_count)| {
+                                    |data| {
                                         Self::copy_audio_buffer(
-                                            packet_buffer,
-                                            *byte_count,
+                                            &data.packet[..],
+                                            data.packet_size,
                                             &mut sample_buffer,
                                         );
                                         Ok(())
@@ -209,19 +231,16 @@ impl AudioPlayer {
                                 if res.is_ok() {
                                     buffer_idx += 1;
                                 } else {
-                                    let res = buffer_consumer.consume_any(
-                                        TIMEOUT,
-                                        |idx, (packet_buffer, byte_count)| {
-                                            Self::copy_audio_buffer(
-                                                packet_buffer,
-                                                *byte_count,
-                                                &mut sample_buffer,
-                                            );
-                                            // todo: check buffer_idx is not a copy
-                                            buffer_idx = idx + 1;
-                                            Ok(())
-                                        },
-                                    );
+                                    let res = buffer_consumer.consume_any(TIMEOUT, |idx, data| {
+                                        Self::copy_audio_buffer(
+                                            &data.packet[..],
+                                            data.packet_size,
+                                            &mut sample_buffer,
+                                        );
+                                        // todo: check buffer_idx is not a copy
+                                        buffer_idx = idx + 1;
+                                        Ok(())
+                                    });
                                     if res.is_err() {
                                         break;
                                     }

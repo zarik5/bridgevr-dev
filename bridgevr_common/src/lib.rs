@@ -2,12 +2,12 @@
 pub mod logging;
 pub use logging::StrResult;
 
-pub mod audio_io;
+pub mod audio;
 pub mod constants;
 pub mod event_timing;
-pub mod ffr_utils;
+pub mod ffr;
 pub mod packets;
-pub mod rendering_utils;
+pub mod rendering;
 pub mod ring_buffer;
 pub mod settings;
 pub mod sockets;

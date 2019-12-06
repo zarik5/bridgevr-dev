@@ -10,5 +10,5 @@ build = 'build.rs'
 crate-type = ['rlib']
 
 [build-dependencies]
-bindgen = '0.52.0'
-cc = '1.0.47'
+bindgen = '*'
+cc = '*'

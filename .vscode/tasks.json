@@ -22,6 +22,10 @@
                 "philipalldredge/cargo-apk",
                 "cargo apk build"
             ],
+        },
+        {
+            "label": "clippy all",
+            "command": "cargo clippy -- -W clippy-pedantic",
         }
     ]
 }

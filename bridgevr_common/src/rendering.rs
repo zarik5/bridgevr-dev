@@ -21,7 +21,7 @@ use std::{
     iter,
     mem::ManuallyDrop,
     mem::*,
-    ptr::{self, NonNull},
+    ptr::{self, *},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -52,6 +52,23 @@ type MemoryImpl = <back::Backend as gfx_hal::Backend>::Memory;
 type ImageImpl = <back::Backend as gfx_hal::Backend>::Image;
 type ImageViewImpl = <back::Backend as gfx_hal::Backend>::ImageView;
 
+#[cfg(feature = "dx11")]
+pub fn format_from_native(dxgi_format: u32) -> Format {
+    use winapi::shared::dxgiformat::*;
+    match dxgi_format {
+        DXGI_FORMAT_R8G8B8A8_UNORM => Format::Rgba8Unorm,
+        DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => Format::Rgba8Srgb,
+        _ => Format::Rgba8Unorm,
+    }
+}
+
+#[cfg(feature = "dx11")]
+macro_rules! addr_of {
+    ($e:expr) => {
+        &mut $e as *mut _ as _
+    };
+}
+
 pub enum BufferUsage {
     Mutable,
     Immutable,
@@ -71,7 +88,7 @@ pub enum OperationDesc {
     },
 }
 
-// Graphics abstraction layer 2D 
+// Graphics abstraction layer 2D
 // Expose a higher level API for 2D post-processing using shaders
 pub struct GraphicsAL2D {
     instance: InstanceImpl,
@@ -111,7 +128,7 @@ impl GraphicsAL2D {
         let queue_group = trace_none!(gpu.queue_groups.pop())?;
 
         Ok(GraphicsAL2D {
-            instance: instance,
+            instance,
             physical_device,
             device,
             queue_group,
@@ -137,7 +154,8 @@ impl GraphicsAL2D {
         }
 
         // todo: remove transmute if gfx will support accessing raw handle
-        let physical_device_mock: &PhysicalDeviceMock = unsafe { transmute(&self.physical_device) };
+        let physical_device_mock: &PhysicalDeviceMock =
+            unsafe { &*(&self.physical_device as *const _ as *const _) };
         physical_device_mock.handle.as_raw()
     }
 
@@ -148,7 +166,8 @@ impl GraphicsAL2D {
         // Backend::Device has a field raw but it is private.
         // Extracting the memory with transmute
         // todo: remove transmute if gfx will support accessing raw handle
-        let raw: &Arc<gfx_backend_vulkan::RawDevice> = unsafe { transmute(&self.device) };
+        let raw: &Arc<gfx_backend_vulkan::RawDevice> =
+            unsafe { &*(&self.device as *const _ as *const _) };
         raw.0.handle().as_raw()
     }
 
@@ -158,7 +177,7 @@ impl GraphicsAL2D {
         use wio::com::ComPtr;
 
         // todo: remove transmute if gfx will support accessing raw handle
-        let raw: &ComPtr<d3d11::ID3D11Device> = unsafe { transmute(&self.device) };
+        let raw: &ComPtr<d3d11::ID3D11Device> = unsafe { &*(&self.device as *const _ as *const _) };
         raw.as_raw() as _
     }
 }
@@ -303,10 +322,12 @@ impl Texture {
         width: u32,
         height: u32,
         format: Format,
+        sample_count: Option<u8>,
     ) -> StrResult<Self> {
         let dev = &graphics_al_2d.device;
 
-        let kind = Kind::D2(width, height, /*layers*/ 1, /*samples*/ 1);
+        let sample_count = sample_count.unwrap_or(1);
+        let kind = Kind::D2(width, height, /*layers*/ 1, sample_count);
         //todo check usage bits
         let usage = image::Usage::SAMPLED | image::Usage::STORAGE | image::Usage::COLOR_ATTACHMENT;
 
@@ -416,8 +437,24 @@ impl Texture {
         }
 
         // todo: remove transmute if gfx will support accessing raw handle
-        let image: &ImageMock = unsafe { transmute(&self.image_handle) };
+        let image: &ImageMock = unsafe { &*(&self.image_handle as *const _ as *const _) };
         image.internal as _
+    }
+
+    #[cfg(feature = "dx11")]
+    pub fn as_handle(&self) -> u64 {
+        use winapi::{shared::dxgi, um::d3d11, Interface};
+        use wio::com::ComPtr;
+
+        let imape_ptr = self.as_ptr() as *mut d3d11::ID3D11Resource;
+        unsafe {
+            let mut resource_ptr: *mut dxgi::IDXGIResource = null_mut();
+            (*imape_ptr).QueryInterface(&dxgi::IDXGIResource::uuidof(), addr_of!(resource_ptr));
+            let resource = ComPtr::from_raw(resource_ptr);
+            let mut handle: u64 = 0;
+            resource.GetSharedHandle(addr_of!(&mut handle));
+            handle
+        }
     }
 }
 

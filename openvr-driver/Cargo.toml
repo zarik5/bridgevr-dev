@@ -9,6 +9,6 @@ edition = '2018'
 crate-type = ['rlib']
 
 [dependencies]
-paste = '0.1.6'
-lazy_static = '1.4.0'
+paste = '*'
+lazy_static = '*'
 openvr-driver-sys = { path = '../openvr-driver-sys' }

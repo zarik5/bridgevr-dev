@@ -65,6 +65,7 @@ impl<K: PartialEq, V> Collection<K, V> for TimeoutMap<K, V> {
     }
 }
 
+// If not explicitely calling add(), a Producer does not actually create Vs but only modify them.
 pub struct Producer<V, K = ()> {
     sender: Sender<(K, V)>,
     receiver: Receiver<V>,
@@ -74,6 +75,14 @@ pub struct Producer<V, K = ()> {
 impl<K, V> Producer<V, K> {
     pub fn add(&mut self, empty: V) {
         self.queue.push_back(empty);
+    }
+
+    pub fn wait_for_empty(&mut self, timeout: Duration) -> RingBufResult {
+        let value = self.receiver
+                .recv_timeout(timeout)
+                .map_err(recv_to_ring_buffer_err)?;
+        self.queue.push_back(value);
+        Ok(())
     }
 
     pub fn fill(
@@ -222,11 +231,11 @@ fn ring_buffer_split<V, K, C>(consumer_buffer: C) -> (Producer<V, K>, Consumer<V
     (producer, consumer)
 }
 
-pub fn ring_buffer_split_queue<T>() -> (Producer<T>, Consumer<T>) {
+pub fn queue_ring_buffer_split<T>() -> (Producer<T>, Consumer<T>) {
     ring_buffer_split(VecDeque::new())
 }
 
-pub fn ring_buffer_split_keyed<K, V>(
+pub fn keyed_ring_buffer_split<K, V>(
     values_timeout: Duration,
 ) -> (Producer<V, K>, KeyedConsumer<V, K>) {
     ring_buffer_split(TimeoutMap::new(values_timeout))

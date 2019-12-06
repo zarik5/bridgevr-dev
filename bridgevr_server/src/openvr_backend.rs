@@ -1,7 +1,7 @@
 use bridgevr_common::{packets::*, settings::*};
+use log::warn;
 use openvr_driver as vr;
 use std::sync::*;
-use log::warn;
 
 const DEVICE_ID_FACTOR: usize = 256;
 
@@ -157,9 +157,10 @@ impl OpenvrClient {
 
                 //todo: set common props
 
-                if let Some(custom_props) = &context.settings.openvr.hmd_custom {
-                    OpenvrClient::set_custom_props(container, custom_props);
-                }
+                OpenvrClient::set_custom_props(
+                    container,
+                    &context.settings.openvr.hmd_custom_properties,
+                );
 
                 vr::VRInitError_None
             },
@@ -187,10 +188,8 @@ impl OpenvrClient {
 
         for input in handshake_packet.input_devices_initial_data {
             match input {
-                InputDeviceData::OculusTouchPair {..} => {
-                    
-                },
-                _ => unimplemented!()
+                InputDeviceData::OculusTouchPair { .. } => {}
+                _ => unimplemented!(),
             }
         }
 
@@ -263,11 +262,11 @@ impl OpenvrClient {
             &self.hmd_context.pose,
         );
 
-        for c in 0..controller_poses.len() {
-            let controller_context = &self.controllers[c].1;
+        for (i, pose) in controller_poses.iter().enumerate() {
+            let controller_context = &self.controllers[i].1;
             self.update_pose(
                 &controller_context.object_id,
-                &controller_poses[c],
+                pose,
                 &controller_context.pose,
             );
         }

@@ -4,6 +4,6 @@ members = [
     # "openvr-driver",
     "bridgevr_common",
     # "bridgevr_client",
-    # "bridgevr_server",
-    "playground",
+    "bridgevr_server",
+    # "playground",
 ]

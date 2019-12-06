@@ -174,18 +174,15 @@ pub enum VideoEncoderDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum AudioEncoderDesc {
-    Gstreamer(String),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
 pub enum VideoDecoderDesc {
     Gstreamer(String),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum AudioDecoderDesc {
-    Gstreamer(String),
+pub enum CompositionFiltering {
+    NearestNeighbour,
+    Bilinear,
+    Lanczos,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -195,31 +192,40 @@ pub struct FoveatedRendering {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum Slices {
-    Count(u64),
-    Size { max_pixels: u64 },
-}
-
-#[derive(Serialize, Deserialize, Clone)]
 pub struct VideoDesc {
     pub frame_size: FrameSize,
+    pub composition_filtering: CompositionFiltering,
+    pub foveated_rendering: Switch<FoveatedRendering>,
+    pub slice_count: u64,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
-    pub foveated_rendering: Switch<FoveatedRendering>,
-    pub slices: Slices,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct AudioDesc {
-    pub bitrate_video_audio_balance: f32,
-    pub encoder: AudioEncoderDesc,
-    pub decoder: AudioDecoderDesc,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MicrophoneDesc {
-    pub encoder: AudioEncoderDesc,
-    pub decoder: AudioDecoderDesc,
+    pub client_microphone_device_index: Switch<Option<u64>>,
+    pub server_microphone_device_index: Switch<u64>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AudioDesc {
+    pub loopback_device_index: Switch<Option<u64>>,
+    pub microphone: Switch<MicrophoneDesc>,
+    pub max_packet_size: u64,
+    pub max_latency_ms: u64, // if set too low the audio becomes choppy
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum CompositorType {
+    // (default) Use DirectModeDriver interface
+    // cons:
+    // * supperted limited number of color formats
+    // * there can be some glitches with head orientation when more than one layer is submitted
+    Custom,
+    // Use  VirtualDisplay interface.
+    // pro: none of Custom mode cons.
+    // cons: tiny bit more latency, potential lower image quality
+    Runtime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -241,10 +247,11 @@ pub struct OpenvrProp {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OpenvrProps {
+    pub compositor_type: CompositorType,
     pub preferred_render_eye_width: Option<u32>,
     pub preferred_render_eye_height: Option<u32>,
-    pub hmd_custom_properties: Option<Vec<OpenvrProp>>,
-    pub controllers_custom_properties: Option<Vec<OpenvrProp>>,
+    pub hmd_custom_properties: Vec<OpenvrProp>,
+    pub controllers_custom_properties: Vec<OpenvrProp>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -253,8 +260,7 @@ pub struct Settings {
     pub latency: LatencyDesc,
     pub bitrate: BitrateDesc,
     pub video: VideoDesc,
-    pub audio: Switch<AudioDesc>,
-    pub microphone: Switch<MicrophoneDesc>,
+    pub audio: AudioDesc,
     pub openvr: OpenvrProps,
 }
 

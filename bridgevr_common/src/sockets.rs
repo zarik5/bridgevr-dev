@@ -1,13 +1,9 @@
-use crate::{packets::*, ring_buffer::*, thread_loop::ThreadLoop, *};
+use crate::{packets::*, ring_buffer::*, thread_loop::ThreadLoop, *, constants::MESSAGE_PORT};
 use log::*;
 use serde::{de::*, *};
 use std::{collections::*, convert::TryInto, marker::PhantomData, net::*, sync::*, time::*};
 
-const MAX_PACKET_SIZE_BYTES: usize = 4_000;
-
-// this is used with UDP for pose data and TCP for shutdown signal
-// at least other two ports are used (out p1: video, out p2: audio, in p1: microphone)
-pub const MESSAGE_PORT: u16 = 9943;
+pub const MAX_PACKET_SIZE_BYTES: usize = 4_000;
 
 const BIND_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED); // todo: or Ipv4Addr::LOCALHOST ?
 const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 123);
@@ -43,18 +39,69 @@ pub fn deserialize_indexed_header_from<H: DeserializeOwned>(buffer: &[u8]) -> St
     trace_err!(bincode::deserialize_from(buffer))
 }
 
+pub fn search_client(
+    client_ip: &Option<String>,
+    timeout: Duration,
+) -> StrResult<(ClientHandshakePacket, ClientCandidateDesc)> {
+    let deadline = Instant::now() + timeout;
+
+    let listener = trace_err!(UdpSocket::bind(SocketAddr::new(BIND_ADDR, MESSAGE_PORT)))?;
+    trace_err!(listener.join_multicast_v4(&MULTICAST_ADDR, &Ipv4Addr::UNSPECIFIED))?;
+    trace_err!(listener.set_read_timeout(Some(HANDSHAKE_TIMEOUT)))?;
+
+    let maybe_target_client_ip = match &client_ip {
+        Some(ip_str) => Some(trace_err!(ip_str.parse::<IpAddr>(), "Client IP")?),
+        None => None,
+    };
+
+    let mut packet_buffer = [0u8; MAX_PACKET_SIZE_BYTES];
+    let mut try_find_client = || -> Result<(ClientHandshakePacket, ClientCandidateDesc), ()> {
+        let (size, address) = listener
+            .recv_from(&mut packet_buffer)
+            .map_err(|e| warn!("No handshake packet received: {}", e))?;
+
+        if let Some(ip) = maybe_target_client_ip {
+            if address.ip() != ip {
+                warn!("Found client with wrong IP");
+                return Err(())
+            }
+        }
+
+        let client_handshake_packet = bincode::deserialize(&packet_buffer[..size])
+            .map_err(|e| warn!("Received handshake packet: {}", e))?;
+        let tcp_message_socket =
+            TcpStream::connect(address).map_err(|e| warn!("TCP connection: {}", e))?;
+
+        Ok((
+            client_handshake_packet,
+            ClientCandidateDesc {
+                client_ip: address.ip(),
+                tcp_message_socket,
+            },
+        ))
+    };
+
+    loop {
+        if let Ok(pair) = try_find_client() {
+            break Ok(pair);
+        } else if Instant::now() > deadline {
+            break Err("No valid client found".into());
+        }
+    }
+}
+
 pub struct SenderData {
-    packet: Vec<u8>,
-    header_size: usize,
-    data_size: usize,
+    pub packet: Vec<u8>,
+    pub data_offset: usize,
+    pub data_size: usize,
 }
 
 // metadata is any information relative to the packet that is not stored directly in it.
 // In particular it is used as input index by MediaCodec.
 pub struct ReceiverData<M> {
-    packet: Vec<u8>,
-    metadata: M,
-    packet_size: usize,
+    pub packet: Vec<u8>,
+    pub metadata: M,
+    pub packet_size: usize,
 }
 
 struct SocketData {
@@ -71,7 +118,7 @@ pub struct ConnectionManager<SM> {
     tcp_message_receiver_thread: ThreadLoop,
     buffer_sockets: HashMap<u16, SocketData>,
 
-    // Vec<u8> specifically implements Write. Written data is appended.
+    // Vec<u8> implements Write. Written data is appended.
     // Must be cleared before sending new data.
     // todo: remove Arc<Mutex<>>?
     send_message_buffer: Arc<Mutex<Vec<u8>>>,
@@ -86,17 +133,13 @@ pub struct ClientCandidateDesc {
     tcp_message_socket: TcpStream,
 }
 
-#[derive(Serialize, Deserialize)]
-struct ServerHandshakeWrapper(ServerHandshakePacket, u16);
-
 impl<SM> ConnectionManager<SM> {
     fn create_connection_manager<R: DeserializeOwned + 'static>(
         tcp_message_socket: TcpStream,
         peer_ip: IpAddr,
-        message_port: u16,
         message_received_callback: Arc<Mutex<dyn FnMut(R) + Send>>,
     ) -> StrResult<Self> {
-        let udp_message_socket = Arc::new(create_udp_socket(peer_ip, message_port)?);
+        let udp_message_socket = Arc::new(create_udp_socket(peer_ip, MESSAGE_PORT)?);
         let tcp_message_socket = Arc::new(tcp_message_socket);
 
         let udp_message_receiver_thread = thread_loop::spawn({
@@ -147,76 +190,20 @@ impl<SM> ConnectionManager<SM> {
         })
     }
 
-    pub fn search_client(
-        client_ip: Option<String>,
-        timeout: Duration,
-    ) -> StrResult<(ClientHandshakePacket, ClientCandidateDesc)> {
-        let deadline = Instant::now() + timeout;
-
-        let listener = trace_err!(UdpSocket::bind(SocketAddr::new(BIND_ADDR, MESSAGE_PORT)))?;
-        trace_err!(listener.join_multicast_v4(&MULTICAST_ADDR, &Ipv4Addr::UNSPECIFIED))?;
-        trace_err!(listener.set_read_timeout(Some(HANDSHAKE_TIMEOUT)))?;
-
-        let maybe_target_client_ip = match &client_ip {
-            Some(ip_str) => Some(trace_err!(ip_str.parse::<IpAddr>(), "Client IP")?),
-            None => None,
-        };
-
-        let mut packet_buffer = [0u8; MAX_PACKET_SIZE_BYTES];
-        let mut try_find_client = || -> Result<(ClientHandshakePacket, ClientCandidateDesc), ()> {
-            let (size, address) = listener
-                .recv_from(&mut packet_buffer)
-                .map_err(|e| warn!("No handshake packet received: {}", e))?;
-
-            if let Some(ip) = maybe_target_client_ip {
-                if address.ip() != ip {
-                    warn!("Found client with wrong IP");
-                    Err(())?;
-                }
-            }
-
-            let client_handshake_packet = bincode::deserialize(&packet_buffer[..size])
-                .map_err(|e| warn!("Received handshake packet: {}", e))?;
-            let tcp_message_socket =
-                TcpStream::connect(address).map_err(|e| warn!("TCP connection: {}", e))?;
-
-            Ok((
-                client_handshake_packet,
-                ClientCandidateDesc {
-                    client_ip: address.ip(),
-                    tcp_message_socket,
-                },
-            ))
-        };
-
-        loop {
-            if let Ok(pair) = try_find_client() {
-                break Ok(pair);
-            } else if Instant::now() > deadline {
-                break Err("No valid client found".into());
-            }
-        }
-    }
-
     pub fn connect_to_client(
         client_candidate_desc: ClientCandidateDesc,
-        starting_data_port: u16,
         handshake_packet: ServerHandshakePacket,
         message_received_callback: impl FnMut(ClientMessage) + Send + 'static,
     ) -> StrResult<Self> {
         let message_received_callback = Arc::new(Mutex::new(message_received_callback));
         trace_err!(
-            bincode::serialize_into(
-                &client_candidate_desc.tcp_message_socket,
-                &ServerHandshakeWrapper(handshake_packet, starting_data_port),
-            ),
+            bincode::serialize_into(&client_candidate_desc.tcp_message_socket, &handshake_packet,),
             "Handshake packet send"
         )?;
 
         Self::create_connection_manager(
             client_candidate_desc.tcp_message_socket,
             client_candidate_desc.client_ip,
-            starting_data_port,
             message_received_callback,
         )
     }
@@ -252,21 +239,19 @@ impl<SM> ConnectionManager<SM> {
                 if let Ok(pair) = listener.accept() {
                     break pair;
                 } else if Instant::now() > accept_deadline {
-                    Err(())?;
+                    return Err(())
                 }
             };
             control_socket
                 .set_nonblocking(false)
                 .map_err(|err| warn!("Control socket: {}", err))?;
 
-            let ServerHandshakeWrapper(server_handshake_packet, message_port) =
-                bincode::deserialize_from(&control_socket)
-                    .map_err(|err| warn!("Handshake packet receive: {}", err))?;
+            let server_handshake_packet = bincode::deserialize_from(&control_socket)
+                .map_err(|err| warn!("Handshake packet receive: {}", err))?;
 
             let connection_manager = Self::create_connection_manager(
                 control_socket,
                 address.ip(),
-                message_port,
                 message_received_callback.clone(),
             )
             .map_err(|_| warn!("Cannot create connection manager"))?;
@@ -281,7 +266,7 @@ impl<SM> ConnectionManager<SM> {
         }
     }
 
-    pub fn begin_send_indexed_buffers(
+    pub fn begin_send_buffers(
         &mut self,
         port: u16,
         mut buffer_consumer: Consumer<SenderData>,
@@ -293,7 +278,7 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.sender_thread.is_some() {
-            Err(format!("Already sending on port {}", port))?;
+            return Err(format!("Already sending on port {}", port))
         }
 
         let socket = socket_data_ref.socket.clone();
@@ -302,7 +287,7 @@ impl<SM> ConnectionManager<SM> {
                 .consume(PACKET_TIMEOUT, |data| -> UnitResult {
                     // todo: send returns a usize. check that the whole packet is sent
                     socket
-                        .send(&data.packet[0..(data.header_size + data.data_size)])
+                        .send(&data.packet[0..(data.data_offset + data.data_size)])
                         .map(|_| ())
                         .map_err(|e| warn!("UDP send error: {}", e))
                 })
@@ -324,7 +309,7 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.receiver_thread.is_some() {
-            Err(format!("Already listening on port {}", port))?;
+            return Err(format!("Already listening on port {}", port))
         }
 
         let socket = socket_data_ref.socket.clone();
@@ -361,13 +346,13 @@ impl<SM: Serialize> ConnectionManager<SM> {
             .udp_message_socket
             .send(&send_message_buffer[..packet_size as _])
         {
-            warn!("UDP send error: {}", err);
+            warn!("UDP send error: {}", err)
         }
     }
 
     pub fn send_message_tcp(&mut self, packet: &SM) {
         if let Err(err) = bincode::serialize_into(&*self.tcp_message_socket, packet) {
-            warn!("TCP send error: {}", err);
+            warn!("TCP send error: {}", err)
         }
     }
 }
@@ -379,17 +364,15 @@ impl<SM> Drop for ConnectionManager<SM> {
         self.udp_message_receiver_thread.request_stop();
         self.tcp_message_receiver_thread.request_stop();
 
-        for (
-            _,
-            SocketData {
-                sender_thread,
-                receiver_thread,
-                ..
-            },
-        ) in &mut self.buffer_sockets
+        for data in &mut self.buffer_sockets.values_mut()
         {
-            sender_thread.as_ref().map(|t| t.request_stop());
-            receiver_thread.as_ref().map(|t| t.request_stop());
+            if let Some(thread) = &mut data.sender_thread {
+                thread.request_stop()
+            }
+
+            if let Some(thread) = &mut data.receiver_thread {
+                thread.request_stop()
+            }
         }
     }
 }

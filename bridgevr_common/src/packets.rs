@@ -1,7 +1,7 @@
 // WARNING: never use usize in in packets because its size is hardware dependent and deserialization
 // can fail
 
-use crate::settings::*;
+use crate::{constants::Version, settings::*};
 use bitflags::bitflags;
 use serde::*;
 use std::hash::*;
@@ -100,7 +100,7 @@ pub enum InputDeviceData {
         touchpad_vertical: f32,
         digital_input: OculusGoDigitalInput,
     },
-    OculusHand([Pose; 22]),
+    OculusHand(Vec<Pose>),
     GenericTracker(Pose),
 }
 
@@ -109,7 +109,8 @@ pub struct ClientStatistics {}
 
 #[derive(Serialize, Deserialize)]
 pub struct ClientHandshakePacket {
-    pub client_version: u32,
+    pub bridgevr_name: String,
+    pub version: Version,
     pub native_eye_width: u32,
     pub native_eye_height: u32,
     pub fov: [Fov; 2],
@@ -120,7 +121,7 @@ pub struct ClientHandshakePacket {
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerHandshakePacket {
-    pub server_version: u32,
+    pub version: Version,
     pub settings: Settings,
     pub target_eye_width: u32,
     pub target_eye_height: u32,
@@ -134,12 +135,9 @@ pub enum ServerMessage {
 
 #[derive(Serialize, Deserialize)]
 pub enum ClientMessage {
-    HmdAndControllers {
-        // input
+    Input {
         hmd_pose: Pose,
-        input_devices_data: Vec<InputDeviceData>,
-
-        // timing
+        devices_data: Vec<InputDeviceData>,
         additional_vsync_offset_ns: i32,
     },
     Statistics(ClientStatistics),
@@ -149,6 +147,7 @@ pub enum ClientMessage {
 pub struct VideoPacketHeader {
     pub sub_nal_idx: u8,
     pub sub_nal_count: u8,
+    pub hmd_pose: Pose,
 }
 
 // audio packets can be subdiveded indefinitely, no metadata required

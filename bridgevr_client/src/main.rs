@@ -1,7 +1,8 @@
-mod video_decoder;
-mod graphics;
+mod compositor;
 mod input;
 mod logging_backend;
+mod openxr_backend;
+mod video_decoder;
 
 use bridgevr_common::*;
 // use openxr as xr;
