@@ -53,6 +53,13 @@ type ImageImpl = <back::Backend as gfx_hal::Backend>::Image;
 type ImageViewImpl = <back::Backend as gfx_hal::Backend>::ImageView;
 
 #[cfg(feature = "dx11")]
+macro_rules! addr_of {
+    ($e:expr) => {
+        &mut $e as *mut _ as _
+    };
+}
+
+#[cfg(feature = "dx11")]
 pub fn format_from_native(dxgi_format: u32) -> Format {
     use winapi::shared::dxgiformat::*;
     match dxgi_format {
@@ -60,13 +67,6 @@ pub fn format_from_native(dxgi_format: u32) -> Format {
         DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => Format::Rgba8Srgb,
         _ => Format::Rgba8Unorm,
     }
-}
-
-#[cfg(feature = "dx11")]
-macro_rules! addr_of {
-    ($e:expr) => {
-        &mut $e as *mut _ as _
-    };
 }
 
 pub enum BufferUsage {
@@ -354,107 +354,63 @@ impl Texture {
     }
 
     #[cfg(feature = "vulkan")]
-    pub fn from_ptr(
-        ptr: u64,
-        graphics_al_2d: Arc<GraphicsAL2D>,
-        width: u32,
-        height: u32,
-        depth: u32,
-        format: Format,
-    ) -> StrResult<Self> {
-        use ash::vk::{self, Handle};
-
-        // only the _raw filed should matter
-        struct ImageMock {
-            _raw: vk::Image,
-            _ty: vk::ImageType,
-            _flags: vk::ImageCreateFlags,
-            _extent: vk::Extent3D,
-        }
-
-        let image_mock = ImageMock {
-            _raw: vk::Image::from_raw(ptr),
-            _ty: vk::ImageType::TYPE_2D,
-            _flags: vk::ImageCreateFlags::empty(),
-            _extent: vk::Extent3D {
-                width,
-                height,
-                depth,
-            },
-        };
-
-        let mut image_handle = ManuallyDrop::new(unsafe { transmute(image_mock) });
-
-        let (image_memory, image_view) =
-            Texture::create_image_memory_view(&mut image_handle, graphics_al_2d.clone(), format)?;
-
-        Ok(Self {
-            graphics_al_2d,
-            image_handle,
-            image_memory,
-            image_view,
-        })
+    pub fn from_ptr(ptr: u64, graphics_al_2d: Arc<GraphicsAL2D>) -> StrResult<Self> {
+        unimplemented!();
     }
 
-    pub fn wait_for_signal(&self) {
-        std::unimplemented!();
+    #[cfg(feature = "dx11")]
+    pub fn from_ptr(ptr: u64, graphics_al_2d: Arc<GraphicsAL2D>) -> StrResult<Self> {
+        unimplemented!()
+    }
+
+    #[cfg(feature = "vulkan")]
+    pub fn from_handle(handle: u64, graphics_al_2d: Arc<GraphicsAL2D>) -> StrResult<Self> {
+        Self::from_ptr(handle, graphics_al_2d)
+    }
+
+    #[cfg(feature = "dx11")]
+    pub fn from_handle(handle: u64, graphics_al_2d: Arc<GraphicsAL2D>) -> StrResult<Self> {
+        unimplemented!();
     }
 
     #[cfg(feature = "vulkan")]
     pub fn as_ptr(&self) -> u64 {
-        use ash::vk::{self, Handle};
-
-        // todo: remove transmute if gfx will support accessing raw handle
-        let raw: &vk::Image = unsafe { transmute(&self.image_handle) };
-        raw.as_raw()
+        unimplemented!();
     }
 
     #[cfg(feature = "dx11")]
     pub fn as_ptr(&self) -> u64 {
-        use winapi::{shared::dxgiformat::DXGI_FORMAT, um::d3d11};
+        unimplemented!();
+    }
 
-        // WARNING: transmuting a big structure such as ImageMock is extremely dangerous
-        // Any internal change in gfx-hal can break this code
-
-        struct _DecomposedDxgiFormatMock {
-            pub typeless: DXGI_FORMAT,
-            pub srv: Option<DXGI_FORMAT>,
-            pub rtv: Option<DXGI_FORMAT>,
-            pub uav: Option<DXGI_FORMAT>,
-            pub dsv: Option<DXGI_FORMAT>,
-            pub copy_uav: Option<DXGI_FORMAT>,
-            pub copy_srv: Option<DXGI_FORMAT>,
-        }
-
-        struct ImageMock {
-            _kind: image::Kind,
-            _usage: image::Usage,
-            _format: format::Format,
-            _view_caps: image::ViewCapabilities,
-            _decomposed_format: _DecomposedDxgiFormatMock,
-            _mip_levels: image::Level,
-            internal: *mut d3d11::ID3D11Resource,
-        }
-
-        // todo: remove transmute if gfx will support accessing raw handle
-        let image: &ImageMock = unsafe { &*(&self.image_handle as *const _ as *const _) };
-        image.internal as _
+    #[cfg(feature = "vulkan")]
+    pub fn as_handle(&self) -> u64 {
+        self.as_ptr()
     }
 
     #[cfg(feature = "dx11")]
     pub fn as_handle(&self) -> u64 {
-        use winapi::{shared::dxgi, um::d3d11, Interface};
-        use wio::com::ComPtr;
+        unimplemented!();
+    }
 
-        let imape_ptr = self.as_ptr() as *mut d3d11::ID3D11Resource;
-        unsafe {
-            let mut resource_ptr: *mut dxgi::IDXGIResource = null_mut();
-            (*imape_ptr).QueryInterface(&dxgi::IDXGIResource::uuidof(), addr_of!(resource_ptr));
-            let resource = ComPtr::from_raw(resource_ptr);
-            let mut handle: u64 = 0;
-            resource.GetSharedHandle(addr_of!(&mut handle));
-            handle
-        }
+    #[cfg(feature = "vulkan")]
+    pub fn lock(&self) {
+        unimplemented!();
+    }
+
+    #[cfg(feature = "dx11")]
+    pub fn lock(&self) {
+        unimplemented!();
+    }
+
+    #[cfg(feature = "vulkan")]
+    pub fn unlock(&self) {
+        unimplemented!();
+    }
+
+    #[cfg(feature = "dx11")]
+    pub fn unlock(&self) {
+        unimplemented!();
     }
 }
 

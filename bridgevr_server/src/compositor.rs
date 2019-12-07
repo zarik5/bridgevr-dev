@@ -63,13 +63,9 @@ pub struct Slice {
     height: u32,
 }
 
-// The compositor sends back the present data after it took a lock on shared_texture_handle.
-// When the present data is returned, OpenVR can return from Present().
-// When the compositor unlocks shared_texture_handle, OpenVR can return from PostPresent() or
-// WaitForPresent().
 pub struct PresentData {
     layers: Vec<([u64; 2], Pose)>,
-    shared_texture_handle: Mutex<u64>,
+    shared_texture_handle: u64,
 }
 
 pub enum CompositorType {
@@ -87,23 +83,15 @@ pub struct Compositor {
     swap_textures: HashMap<u64, Arc<Mutex<Texture>>>,
     compositor_type: CompositorType,
     present_consumer: Arc<Mutex<Consumer<PresentData>>>,
+    wait_for_present_mutex: Arc<Mutex<()>>,
     rendering_loop: ThreadLoop,
 }
 
 impl Compositor {
-    pub fn empty_rendering_loop(present_consumer: Arc<Mutex<Consumer<PresentData>>>) -> ThreadLoop {
-        thread_loop::spawn(move || {
-            present_consumer
-                .lock()
-                .unwrap()
-                .consume(TIMEOUT, |_| Ok(()))
-                .ok();
-        })
-    }
-
     pub fn new(
         compositor_type: settings::CompositorType,
         present_consumer: Consumer<PresentData>,
+        wait_for_present_mutex: Arc<Mutex<()>>,
     ) -> StrResult<Self> {
         let graphics_al = Arc::new(GraphicsAL2D::new(Some(0))?);
 
@@ -116,13 +104,24 @@ impl Compositor {
         };
 
         let present_consumer = Arc::new(Mutex::new(present_consumer));
-        let rendering_loop = Self::empty_rendering_loop(present_consumer.clone());
+        let rendering_loop = thread_loop::spawn({
+            let present_consumer = present_consumer.clone();
+
+            move || {
+                present_consumer
+                    .lock()
+                    .unwrap()
+                    .consume(TIMEOUT, |_| Ok(()))
+                    .ok();
+            }
+        });
 
         Ok(Self {
             graphics_al,
             swap_textures: HashMap::new(),
             compositor_type,
             present_consumer,
+            wait_for_present_mutex,
             rendering_loop,
         })
     }
@@ -221,15 +220,27 @@ impl Compositor {
         //             None
         //         ))?);
         //         }).collect();
+        let present_consumer = self.present_consumer.clone();
+        let wait_for_present_mutex = self.wait_for_present_mutex.clone();
+        let render = move || -> UnitResult {
+            let _guard = wait_for_present_mutex.lock().unwrap();
+            present_consumer
+                .lock()
+                .unwrap()
+                .consume(TIMEOUT, |present_data| {
+                    
+                    Ok(())
+                })
+                .map_err(|_| ())?;
 
-        self.rendering_loop = thread_loop::spawn(|| {});
+            Ok(())
+        };
+
+        self.rendering_loop = thread_loop::spawn(move || {
+            render().ok();
+        });
 
         Ok(())
-    }
-
-    // Calling this method is not mandatory but it makes the client reconnection faster
-    pub fn deinitialize_for_client(&mut self) {
-        self.rendering_loop = Self::empty_rendering_loop(self.present_consumer.clone());
     }
 
     pub fn device_ptr(&self) -> u64 {
