@@ -22,9 +22,10 @@ use std::{
     mem::ManuallyDrop,
     mem::*,
     ptr::{self, *},
-    sync::{Arc, Mutex},
+    sync::{Arc},
     time::Duration,
 };
+use parking_lot::Mutex;
 
 pub use gfx_hal::format::Format;
 

@@ -1,7 +1,7 @@
 use std::fmt::*;
 use serde::*;
 
-#[derive(PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, PartialOrd)]
 pub struct Version(u32);
 
 impl Display for Version {

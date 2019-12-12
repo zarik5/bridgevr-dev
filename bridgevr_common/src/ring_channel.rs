@@ -6,17 +6,17 @@ use std::time::*;
 pub type UnitResult = Result<(), ()>;
 
 #[derive(Debug)]
-pub enum RingBufError {
+pub enum RingChannelError {
     Timeout,
     Shutdown,
 }
 
-type RingBufResult = Result<(), RingBufError>;
+type RingBufResult = Result<(), RingChannelError>;
 
-fn recv_to_ring_buffer_err(err: RecvTimeoutError) -> RingBufError {
+fn recv_to_ring_buffer_err(err: RecvTimeoutError) -> RingChannelError {
     match err {
-        RecvTimeoutError::Timeout => RingBufError::Timeout,
-        RecvTimeoutError::Disconnected => RingBufError::Shutdown,
+        RecvTimeoutError::Timeout => RingChannelError::Timeout,
+        RecvTimeoutError::Disconnected => RingChannelError::Shutdown,
     }
 }
 
@@ -100,7 +100,7 @@ impl<K, V> Producer<V, K> {
         if let Ok(key) = callback(&mut value) {
             self.sender
                 .send((key, value))
-                .map_err(|_| RingBufError::Shutdown)?;
+                .map_err(|_| RingChannelError::Shutdown)?;
         } else {
             self.queue.push_front(value);
         }
@@ -116,30 +116,30 @@ pub struct Consumer<V, K = (), C = VecDeque<V>> {
 
 impl<K, V, C: Collection<K, V>> Consumer<V, K, C> {
     pub fn push(&self, empty: V) -> RingBufResult {
-        self.sender.send(empty).map_err(|_| RingBufError::Shutdown)
+        self.sender.send(empty).map_err(|_| RingChannelError::Shutdown)
     }
 
     fn consume_element(
         &mut self,
         timeout: Duration,
-        callback: impl FnOnce(&K, &V) -> UnitResult,
+        callback: impl FnOnce(&K, &mut V) -> UnitResult,
     ) -> RingBufResult {
-        let (k, v) = if let Some(kv) = self.buffer.remove_any() {
+        let (k, mut v) = if let Some(kv) = self.buffer.remove_any() {
             kv
         } else {
             self.receiver
                 .recv_timeout(timeout)
                 .map_err(recv_to_ring_buffer_err)?
         };
-        if callback(&k, &v).is_ok() {
-            self.sender.send(v).map_err(|_| RingBufError::Shutdown)?;
+        if callback(&k, &mut v).is_ok() {
+            self.sender.send(v).map_err(|_| RingChannelError::Shutdown)?;
         } else {
             self.buffer.push_front(k, v);
         }
         for value in self.buffer.remove_expired() {
             self.sender
                 .send(value)
-                .map_err(|_| RingBufError::Shutdown)?;
+                .map_err(|_| RingChannelError::Shutdown)?;
         }
         Ok(())
     }
@@ -149,10 +149,10 @@ impl<K: PartialEq, V, C: Collection<K, V>> Consumer<V, K, C> {
         &mut self,
         key: &K,
         timeout: Duration,
-        callback: impl FnOnce(&V) -> UnitResult,
+        callback: impl FnOnce(&mut V) -> UnitResult,
     ) -> RingBufResult {
         let deadline = Instant::now() + timeout;
-        let (k, v) = if let Some(kv) = self.buffer.remove(key) {
+        let (k, mut v) = if let Some(kv) = self.buffer.remove(key) {
             kv
         } else {
             let mut kv = self
@@ -169,15 +169,15 @@ impl<K: PartialEq, V, C: Collection<K, V>> Consumer<V, K, C> {
             kv
         };
 
-        if callback(&v).is_ok() {
-            self.sender.send(v).map_err(|_| RingBufError::Shutdown)?;
+        if callback(&mut v).is_ok() {
+            self.sender.send(v).map_err(|_| RingChannelError::Shutdown)?;
         } else {
             self.buffer.push_front(k, v);
         }
         for value in self.buffer.remove_expired() {
             self.sender
                 .send(value)
-                .map_err(|_| RingBufError::Shutdown)?;
+                .map_err(|_| RingChannelError::Shutdown)?;
         }
         Ok(())
     }
@@ -197,7 +197,7 @@ impl<K: PartialEq, V> Consumer<V, K, TimeoutMap<K, V>> {
     pub fn consume_any(
         &mut self,
         timeout: Duration,
-        callback: impl FnOnce(&K, &V) -> UnitResult,
+        callback: impl FnOnce(&K, &mut V) -> UnitResult,
     ) -> RingBufResult {
         self.consume_element(timeout, callback)
     }
@@ -206,7 +206,7 @@ impl<K: PartialEq, V> Consumer<V, K, TimeoutMap<K, V>> {
         &mut self,
         key: &K,
         timeout: Duration,
-        callback: impl FnOnce(&V) -> UnitResult,
+        callback: impl FnOnce(&mut V) -> UnitResult,
     ) -> RingBufResult {
         self.consume_entry(key, timeout, callback)
     }
@@ -214,7 +214,7 @@ impl<K: PartialEq, V> Consumer<V, K, TimeoutMap<K, V>> {
 
 pub type KeyedConsumer<V, K> = Consumer<V, K, TimeoutMap<K, V>>;
 
-fn ring_buffer_split<V, K, C>(consumer_buffer: C) -> (Producer<V, K>, Consumer<V, K, C>) {
+fn ring_channel_split<V, K, C>(consumer_buffer: C) -> (Producer<V, K>, Consumer<V, K, C>) {
     let (producer_sender, consumer_receiver) = mpsc::channel();
     let (consumer_sender, producer_receiver) = mpsc::channel();
     let producer = Producer {
@@ -231,12 +231,12 @@ fn ring_buffer_split<V, K, C>(consumer_buffer: C) -> (Producer<V, K>, Consumer<V
     (producer, consumer)
 }
 
-pub fn queue_ring_buffer_split<T>() -> (Producer<T>, Consumer<T>) {
-    ring_buffer_split(VecDeque::new())
+pub fn queue_channel_split<T>() -> (Producer<T>, Consumer<T>) {
+    ring_channel_split(VecDeque::new())
 }
 
-pub fn keyed_ring_buffer_split<K, V>(
+pub fn keyed_channel_split<K, V>(
     values_timeout: Duration,
 ) -> (Producer<V, K>, KeyedConsumer<V, K>) {
-    ring_buffer_split(TimeoutMap::new(values_timeout))
+    ring_channel_split(TimeoutMap::new(values_timeout))
 }

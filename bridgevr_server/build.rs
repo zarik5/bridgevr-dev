@@ -19,4 +19,9 @@ fn main() {
         "cargo:rustc-env=SETTINGS_PATH={}",
         bvr_install_root.join("settings.json").to_str().unwrap()
     );
+
+    println!(
+        "cargo:rustc-env=SESSION_PATH={}",
+        bvr_install_root.join("session.json").to_str().unwrap()
+    );
 }

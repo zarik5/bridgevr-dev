@@ -1,4 +1,12 @@
-use bridgevr_common::settings::VideoEncoderDesc;
+use crate::compositor::*;
+use bridgevr_common::{
+    rendering::*,
+    ring_channel::*,
+    data::VideoEncoderDesc,
+    sockets::*,
+    thread_loop::{self, *},
+    *,
+};
 
 pub fn aligned_resolution(width: u32, height: u32) -> (u32, u32) {
     (
@@ -7,12 +15,20 @@ pub fn aligned_resolution(width: u32, height: u32) -> (u32, u32) {
     )
 }
 
-pub struct VideoEncoder {}
+pub struct VideoEncoder {
+    thread_loop: ThreadLoop,
+}
 
 impl VideoEncoder {
-    pub fn new(settings: VideoEncoderDesc, packet_ready_callback: impl FnMut(&[u8])) -> Self {
-        panic!();
+    pub fn new(
+        settings: VideoEncoderDesc,
+        frame_consumer: Consumer<FrameSlice>,
+        packet_producer: Producer<SenderData>,
+    ) -> StrResult<Self> {
+        unimplemented!()
     }
 
-    pub fn encode(&mut self, force_idr: bool) {}
+    pub fn request_stop(&mut self) {
+        self.thread_loop.request_stop()
+    }
 }

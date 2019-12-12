@@ -1,4 +1,4 @@
-use crate::{ring_buffer::*, sockets::*, *};
+use crate::{ring_channel::*, sockets::*, *};
 use byteorder::*;
 use cpal::{
     traits::{DeviceTrait, EventLoopTrait, HostTrait},
@@ -6,7 +6,7 @@ use cpal::{
 };
 use log::{error, info};
 use safe_transmute::*;
-use std::{cmp::min, collections::VecDeque, sync::*, time::Duration, *};
+use std::{cmp::min, collections::VecDeque, sync::*, thread::*, time::Duration, *};
 
 const TRACE_CONTEXT: &str = "Audio IO";
 
@@ -21,6 +21,7 @@ enum AudioMode {
 struct AudioSession {
     event_loop: Arc<EventLoop>,
     stream: StreamId,
+    join_handle: Option<JoinHandle<()>>,
 }
 
 impl AudioSession {
@@ -95,7 +96,7 @@ impl AudioSession {
         })?;
         trace_err!(event_loop.play_stream(stream.clone()))?;
 
-        thread::spawn({
+        let join_handle = Some(thread::spawn({
             let event_loop = event_loop.clone();
             move || {
                 event_loop.run(move |_, maybe_data| match maybe_data {
@@ -105,19 +106,25 @@ impl AudioSession {
                     Err(e) => error!("{}", e),
                 });
             }
-        });
+        }));
 
-        Ok(AudioSession { event_loop, stream })
+        Ok(AudioSession {
+            event_loop,
+            stream,
+            join_handle,
+        })
     }
 
-    fn stop(&self) {
+    fn request_stop(&mut self) {
+        // todo: check that this is non blocking
         self.event_loop.destroy_stream(self.stream.clone())
     }
 }
 
 impl Drop for AudioSession {
     fn drop(&mut self) {
-        self.stop()
+        self.request_stop();
+        self.join_handle.take().map(|h| h.join());
     }
 }
 
@@ -175,8 +182,8 @@ impl AudioRecorder {
         Ok(Self { session })
     }
 
-    pub fn stop(&self) {
-        self.session.stop();
+    pub fn request_stop(&mut self) {
+        self.session.request_stop()
     }
 }
 
@@ -256,7 +263,7 @@ impl AudioPlayer {
         Ok(Self { session })
     }
 
-    pub fn stop(&self) {
-        self.session.stop();
+    pub fn request_stop(&mut self) {
+        self.session.request_stop()
     }
 }

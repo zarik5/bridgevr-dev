@@ -1,13 +1,12 @@
 // AADT: Axis-aligned distorted transfer
 
-use crate::rendering::OperationDesc;
+use crate::{rendering::OperationDesc, data::*};
 
-pub struct FfrDesc {}
 
 pub fn ffr_compressed_eye_resolution(
     original_eye_width: u32,
     original_eye_height: u32,
-    ffr_desc: FfrDesc,
+    ffr_desc: FoveatedRenderingDesc,
 ) -> (u32, u32) {
     //todo
     (original_eye_width, original_eye_height)

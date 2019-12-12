@@ -1,7 +1,8 @@
-use crate::{packets::*, ring_buffer::*, thread_loop::ThreadLoop, *, constants::MESSAGE_PORT};
+use crate::{constants::MESSAGE_PORT, data::*, ring_channel::*, thread_loop::ThreadLoop, *};
 use log::*;
+use parking_lot::Mutex;
 use serde::{de::*, *};
-use std::{collections::*, convert::TryInto, marker::PhantomData, net::*, sync::*, time::*};
+use std::{collections::*, convert::TryInto, marker::PhantomData, net::*, sync::Arc, time::*};
 
 pub const MAX_PACKET_SIZE_BYTES: usize = 4_000;
 
@@ -63,7 +64,7 @@ pub fn search_client(
         if let Some(ip) = maybe_target_client_ip {
             if address.ip() != ip {
                 warn!("Found client with wrong IP");
-                return Err(())
+                return Err(());
             }
         }
 
@@ -155,7 +156,7 @@ impl<SM> ConnectionManager<SM> {
                 let message = bincode::deserialize(&packet_buffer[..size])
                     .map_err(|e| warn!("Received message: {}", e))?;
 
-                (&mut *message_received_callback.lock().unwrap())(message);
+                (&mut *message_received_callback.lock())(message);
 
                 Ok(())
             };
@@ -169,7 +170,7 @@ impl<SM> ConnectionManager<SM> {
             let tcp_message_socket = tcp_message_socket.clone();
 
             move || match bincode::deserialize_from(&*tcp_message_socket) {
-                Ok(message) => (&mut *message_received_callback.lock().unwrap())(message),
+                Ok(message) => (&mut *message_received_callback.lock())(message),
                 Err(err) => {
                     warn!("TCP message receive: {}", err);
                     //todo: shutdown
@@ -239,7 +240,7 @@ impl<SM> ConnectionManager<SM> {
                 if let Ok(pair) = listener.accept() {
                     break pair;
                 } else if Instant::now() > accept_deadline {
-                    return Err(())
+                    return Err(());
                 }
             };
             control_socket
@@ -278,7 +279,7 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.sender_thread.is_some() {
-            return Err(format!("Already sending on port {}", port))
+            return Err(format!("Already sending on port {}", port));
         }
 
         let socket = socket_data_ref.socket.clone();
@@ -309,7 +310,7 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.receiver_thread.is_some() {
-            return Err(format!("Already listening on port {}", port))
+            return Err(format!("Already listening on port {}", port));
         }
 
         let socket = socket_data_ref.socket.clone();
@@ -330,12 +331,27 @@ impl<SM> ConnectionManager<SM> {
 
         Ok(())
     }
+
+    pub fn request_stop(&mut self) {
+        self.udp_message_receiver_thread.request_stop();
+        self.tcp_message_receiver_thread.request_stop();
+
+        for data in &mut self.buffer_sockets.values_mut() {
+            if let Some(thread) = &mut data.sender_thread {
+                thread.request_stop()
+            }
+
+            if let Some(thread) = &mut data.receiver_thread {
+                thread.request_stop()
+            }
+        }
+    }
 }
 
 impl<SM: Serialize> ConnectionManager<SM> {
     pub fn send_message_udp(&self, packet: &SM) {
         // reuse same buffer to avoid unnecessary reallocations
-        let mut send_message_buffer = self.send_message_buffer.lock().unwrap();
+        let mut send_message_buffer = self.send_message_buffer.lock();
         send_message_buffer.clear();
 
         let packet_size = bincode::serialized_size(packet).unwrap();
@@ -353,26 +369,6 @@ impl<SM: Serialize> ConnectionManager<SM> {
     pub fn send_message_tcp(&mut self, packet: &SM) {
         if let Err(err) = bincode::serialize_into(&*self.tcp_message_socket, packet) {
             warn!("TCP send error: {}", err)
-        }
-    }
-}
-
-impl<SM> Drop for ConnectionManager<SM> {
-    fn drop(&mut self) {
-        // by calling request_stop() before drop, which is non blocking, I avoid waiting
-        // PACKET_TIMEOUT for every thread.
-        self.udp_message_receiver_thread.request_stop();
-        self.tcp_message_receiver_thread.request_stop();
-
-        for data in &mut self.buffer_sockets.values_mut()
-        {
-            if let Some(thread) = &mut data.sender_thread {
-                thread.request_stop()
-            }
-
-            if let Some(thread) = &mut data.receiver_thread {
-                thread.request_stop()
-            }
         }
     }
 }

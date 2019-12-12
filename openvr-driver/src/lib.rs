@@ -338,7 +338,7 @@ create_native_class_bindings! {
     );
     DestroyAllSwapTextureSets => fn destroy_all_swap_texture_sets(pid: u32);
     GetNextSwapTextureSetIndex => fn get_next_swap_texture_set_index(
-        shared_texture_handles_ptr: &mut [SharedTextureHandle_t; 2],
+        shared_texture_handles: &mut [SharedTextureHandle_t; 2],
         indices: &mut [u32; 2]
     );
     SubmitLayer => fn submit_layer(
@@ -1027,25 +1027,29 @@ forward_fns! {
 #[macro_export]
 macro_rules! _create_entry_point {
     ($create_native_class_fn:ident, $t:ty, $server:expr, $driver_interface_version:ident) => {
+        /// # Safety
+        ///
         #[no_mangle]
         pub unsafe extern "C" fn HmdDriverFactory(
             interface_name: *const ::std::os::raw::c_char,
             return_code_ptr: *mut ::std::os::raw::c_int,
         ) -> *mut c_void {
-            let mut maybe_server: ::std::result::Result<&ServerTrackedDeviceProvider<_>, _> =
+            let mut maybe_server: ::std::result::Result<Arc<ServerTrackedDeviceProvider<_>>, _> =
                 $server;
             match maybe_server {
                 Ok(server) => {
-                    let mut native_class_ptr = server.to_raw();
-
-                    if ::std::ffi::CStr::from_ptr(interface_name).to_str().unwrap()
+                    let mut native_class_ptr = if ::std::ffi::CStr::from_ptr(interface_name)
+                        .to_str()
+                        .unwrap()
                         == ::std::ffi::CStr::from_bytes_with_nul($crate::$driver_interface_version)
                             .unwrap()
                             .to_str()
                             .unwrap()
                     {
-                        native_class_ptr = ::std::ptr::null_mut();
-                    }
+                        server.to_raw()
+                    } else {
+                        ::std::ptr::null_mut()
+                    };
 
                     if native_class_ptr.is_null() && !return_code_ptr.is_null() {
                         *return_code_ptr = $crate::VRInitError_Init_InterfaceNotFound as _;

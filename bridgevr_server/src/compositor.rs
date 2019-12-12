@@ -1,66 +1,25 @@
 use crate::video_encoder::aligned_resolution;
 use bridgevr_common::{
+    data::*,
     ffr::*,
-    packets::*,
     rendering::*,
-    ring_buffer::*,
+    ring_channel::*,
     thread_loop::{self, ThreadLoop},
     *,
+    frame_slices::*,
 };
-use std::{collections::HashMap, ops::RangeFrom, sync::*, time::Duration};
+use std::{collections::HashMap, ops::RangeFrom, sync::Arc, time::Duration};
+use parking_lot::Mutex;
 
 const TRACE_CONTEXT: &str = "Server Graphics";
 
 const TIMEOUT: Duration = Duration::from_millis(100);
 
-pub struct SlicesDesc {
-    single_width: u32,
-    single_height: u32,
-    horizontal_count: usize,
-    vertical_count: usize,
-}
-
-// Find the best arrangement of horizontal and vertical cuts so that the slices are as close as
-// possible to squares. Maximizing the area/perimeter ratio, I minimize the probability that objects
-// in the scene enter or exit the slice, so it uses less bandwidth.
-pub fn slices_desc_from_count(count: usize, frame_width: u32, frame_height: u32) -> SlicesDesc {
-    let mut min_ratio_score = std::f32::MAX; // distance from 1
-    let mut best_slices_desc = SlicesDesc {
-        single_width: frame_width,
-        single_height: frame_height,
-        horizontal_count: 1,
-        vertical_count: 1,
-    };
-    for i in 1..=count {
-        if count % i == 0 {
-            let width = frame_width as f32 / (count / i) as f32;
-            let height = frame_height as f32 / i as f32;
-            let ratio = width / height;
-            let score = (1f32 - ratio).abs();
-            if score < min_ratio_score {
-                min_ratio_score = score;
-                best_slices_desc = SlicesDesc {
-                    single_width: width.ceil() as u32,
-                    single_height: height.ceil() as u32,
-                    horizontal_count: count / i,
-                    vertical_count: i,
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    best_slices_desc
-}
-
-pub struct Slice {
+pub struct FrameSlice {
     index: usize,
     texture: Arc<Texture>,
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
+    pose: Pose,
+    is_idr: bool,
 }
 
 pub struct PresentData {
@@ -68,61 +27,35 @@ pub struct PresentData {
     shared_texture_handle: u64,
 }
 
-pub enum CompositorType {
-    Custom {
-        swap_texture_handle_sets_id_iter: RangeFrom<usize>,
-        swap_texture_handle_sets: HashMap<usize, [u64; 3]>,
-    },
-    Runtime,
-}
-
 // This is able to create and destroy textures even when the client is not connected, so SteamVR
 // does not hang or throw errors.
 pub struct Compositor {
     graphics_al: Arc<GraphicsAL2D>,
     swap_textures: HashMap<u64, Arc<Mutex<Texture>>>,
-    compositor_type: CompositorType,
-    present_consumer: Arc<Mutex<Consumer<PresentData>>>,
-    wait_for_present_mutex: Arc<Mutex<()>>,
-    rendering_loop: ThreadLoop,
+    swap_texture_handle_sets_id_iter: RangeFrom<usize>,
+    swap_texture_handle_sets: HashMap<usize, [u64; 3]>,
+    rendering_loop: Option<ThreadLoop>,
 }
 
 impl Compositor {
-    pub fn new(
-        compositor_type: settings::CompositorType,
-        present_consumer: Consumer<PresentData>,
-        wait_for_present_mutex: Arc<Mutex<()>>,
-    ) -> StrResult<Self> {
+    fn empty_rendering_loop(present_consumer: Arc<Mutex<Consumer<PresentData>>>) -> ThreadLoop {
+        thread_loop::spawn(move || {
+            present_consumer
+                .lock()
+                .consume(TIMEOUT, |_| Ok(()))
+                .ok();
+        })
+    }
+
+    pub fn new() -> StrResult<Self> {
         let graphics_al = Arc::new(GraphicsAL2D::new(Some(0))?);
-
-        let compositor_type = match compositor_type {
-            settings::CompositorType::Custom => CompositorType::Custom {
-                swap_texture_handle_sets_id_iter: 0..,
-                swap_texture_handle_sets: HashMap::new(),
-            },
-            settings::CompositorType::Runtime => CompositorType::Runtime,
-        };
-
-        let present_consumer = Arc::new(Mutex::new(present_consumer));
-        let rendering_loop = thread_loop::spawn({
-            let present_consumer = present_consumer.clone();
-
-            move || {
-                present_consumer
-                    .lock()
-                    .unwrap()
-                    .consume(TIMEOUT, |_| Ok(()))
-                    .ok();
-            }
-        });
 
         Ok(Self {
             graphics_al,
             swap_textures: HashMap::new(),
-            compositor_type,
-            present_consumer,
-            wait_for_present_mutex,
-            rendering_loop,
+            swap_texture_handle_sets_id_iter: 0..,
+            swap_texture_handle_sets: HashMap::new(),
+            rendering_loop: None,
         })
     }
 
@@ -134,58 +67,44 @@ impl Compositor {
         format: u32,
         sample_count: u8,
     ) -> StrResult<(usize, [u64; 3])> {
-        if let CompositorType::Custom {
-            swap_texture_handle_sets_id_iter,
-            swap_texture_handle_sets,
-        } = &mut self.compositor_type
-        {
-            let format = format_from_native(format);
+        let format = format_from_native(format);
 
-            let mut handles = [0; 3];
-            for handle in &mut handles {
-                let texture = Texture::new(
-                    self.graphics_al.clone(),
-                    width,
-                    height,
-                    format,
-                    Some(sample_count),
-                )?;
-                *handle = texture.as_handle();
-                self.swap_textures
-                    .insert(*handle, Arc::new(Mutex::new(texture)));
-            }
-
-            let id = trace_none!(swap_texture_handle_sets_id_iter.next(), "Overflow")?;
-            swap_texture_handle_sets.insert(id, handles);
-            Ok((id, handles))
-        } else {
-            Err("Invalid operation".into())
+        let mut handles = [0; 3];
+        for handle in &mut handles {
+            let texture = Texture::new(
+                self.graphics_al.clone(),
+                width,
+                height,
+                format,
+                Some(sample_count),
+            )?;
+            *handle = texture.as_handle();
+            self.swap_textures
+                .insert(*handle, Arc::new(Mutex::new(texture)));
         }
+
+        let id = trace_none!(self.swap_texture_handle_sets_id_iter.next(), "Overflow")?;
+        self.swap_texture_handle_sets.insert(id, handles);
+        Ok((id, handles))
     }
 
     pub fn destroy_swap_texture_set(&mut self, id: usize) -> StrResult<()> {
-        if let CompositorType::Custom {
-            swap_texture_handle_sets,
-            ..
-        } = &mut self.compositor_type
-        {
-            if let Some(handles) = swap_texture_handle_sets.remove(&id) {
-                for handle in handles.iter() {
-                    self.swap_textures.remove(handle);
-                }
+        if let Some(handles) = self.swap_texture_handle_sets.remove(&id) {
+            for handle in handles.iter() {
+                self.swap_textures.remove(handle);
             }
-            Ok(())
-        } else {
-            Err("Invalid operation".into())
         }
+        Ok(())
     }
 
     pub fn initialize_for_client(
         &mut self,
         target_eye_width: u32,
         target_eye_height: u32,
-        ffr_desc: Option<FfrDesc>,
-        slice_producers: Vec<Producer<Texture>>,
+        ffr_desc: Option<data::FoveatedRenderingDesc>,
+        mut present_consumer: Consumer<PresentData>,
+        wait_for_present_mutex: Arc<Mutex<()>>,
+        slice_producers: Vec<Producer<FrameSlice>>,
     ) -> StrResult<()> {
         let composition_texture = Arc::new(trace_err!(Texture::new(
             self.graphics_al.clone(),
@@ -220,27 +139,34 @@ impl Compositor {
         //             None
         //         ))?);
         //         }).collect();
-        let present_consumer = self.present_consumer.clone();
-        let wait_for_present_mutex = self.wait_for_present_mutex.clone();
-        let render = move || -> UnitResult {
-            let _guard = wait_for_present_mutex.lock().unwrap();
-            present_consumer
-                .lock()
-                .unwrap()
-                .consume(TIMEOUT, |present_data| {
-                    
-                    Ok(())
-                })
-                .map_err(|_| ())?;
+        let mut render = move || -> UnitResult {
+            {
+                let _guard = wait_for_present_mutex.lock();
+                let mut layers = vec![];
+                present_consumer
+                    .consume(TIMEOUT, |present_data| {
+                        layers = present_data.layers.to_vec();
+
+                        Ok(())
+                    })
+                    .map_err(|_| ())?;
+            }
 
             Ok(())
         };
 
-        self.rendering_loop = thread_loop::spawn(move || {
+        self.rendering_loop = Some(thread_loop::spawn(move || {
             render().ok();
-        });
+        }));
 
         Ok(())
+    }
+
+    // Calling this method is not mandatory but it makes the reinitialization faster
+    pub fn request_deinitialize_for_client(&mut self) {
+        if let Some(thread) = &mut self.rendering_loop {
+            thread.request_stop()
+        }
     }
 
     pub fn device_ptr(&self) -> u64 {

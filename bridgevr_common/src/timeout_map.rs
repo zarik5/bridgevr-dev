@@ -53,12 +53,16 @@ impl<K, V> TimeoutMap<K, V> {
             .collect()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=(&K, &V)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
         self.buffer.iter().map(|entry| (&entry.key, &entry.value))
     }
 
-    pub fn keys(&self) -> impl Iterator<Item=&K> {
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
         self.buffer.iter().map(|entry| &entry.key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
     }
 }
 

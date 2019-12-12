@@ -8,7 +8,7 @@ build = 'build.rs'
 
 [package.metadata.android]
 label = 'BridgeVR'
-package_name = 'aab.bridgevr.client'
+package_name = 'bvr.bridgevr.client'
 version_name = '0.0.1'
 version_code = 1
 android_version = 29
@@ -39,7 +39,6 @@ chrono = '0.4.10'
 log = '0.4.8'
 fern = '0.5.9'
 ash = '0.29.0'
+parking_lot = "0.10.0"
+bridgevr_common = { path = '../bridgevr_common', features = ['vulkan'] }
 
-[dependencies.bridgevr_common]
-path = '../bridgevr_common'
-features = ['vulkan']

@@ -7,8 +7,7 @@ pub struct ThreadLoop {
 }
 
 impl ThreadLoop {
-    // this method is non blocking. Join will be called when dropped
-    pub fn request_stop(&self) {
+    pub fn request_stop(&mut self) {
         self.running.store(false, Ordering::Relaxed)
     }
 }
