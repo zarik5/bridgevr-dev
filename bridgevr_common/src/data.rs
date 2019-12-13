@@ -271,6 +271,14 @@ pub enum OpenvrPropValue {
     Matrix34([f32; 12]),
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub enum InputType {
+    Boolean,
+    NormalizedOneSided,
+    NormalizedTwoSided,
+    Skeletal
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct OpenvrProp {
     pub code: u32,
@@ -279,13 +287,13 @@ pub struct OpenvrProp {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OpenvrDesc {
-    pub block_standby: bool,
     pub timeout_seconds: u64,
-    pub input_mapping: Vec<(String, Vec<String>)>,
+    pub block_standby: bool,
+    pub input_mapping: Vec<(String, InputType, Vec<String>)>,
     pub compositor_type: CompositorType,
     pub preferred_render_eye_resolution: Option<(u32, u32)>,
     pub hmd_custom_properties: Vec<OpenvrProp>,
-    pub controllers_custom_properties: Vec<OpenvrProp>,
+    pub controllers_custom_properties: [Vec<OpenvrProp>; 2],
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -320,41 +328,45 @@ bitflags! {
     // Target: XBox controller
     #[derive(Serialize, Deserialize)]
     pub struct GamepadDigitalInput: u16 {
-        const A = 0x0001;
-        const B = 0x0002;
-        const X = 0x0004;
-        const Y = 0x0008;
-        const DPAD_LEFT = 0x0010;
-        const DPAD_RIFHT = 0x0020;
-        const DPAD_UP = 0x0040;
-        const DPAD_DOWN = 0x0080;
-        const JOYSTICK_LEFT_PRESS = 0x0100;
-        const JOYSTICK_RIGHT_PRESS = 0x0200;
-        const MENU = 0x0400;
-        const VIEW = 0x0800;
-        const HOME = 0x1000;
+        const A = 0x00_01;
+        const B = 0x00_02;
+        const X = 0x00_04;
+        const Y = 0x00_08;
+        const DPAD_LEFT = 0x00_10;
+        const DPAD_RIGHT = 0x00_20;
+        const DPAD_UP = 0x00_40;
+        const DPAD_DOWN = 0x00_80;
+        const JOYSTICK_LEFT_PRESS = 0x01_00;
+        const JOYSTICK_RIGHT_PRESS = 0x02_00;
+        const SHOULDER_LEFT = 0x04_00;
+        const SHOULDER_RIGHT = 0x08_00;
+        const MENU = 0x10_00;
+        const VIEW = 0x20_00;
+        const HOME = 0x40_00;
     }
 }
 
 bitflags! {
     #[derive(Serialize, Deserialize)]
-    pub struct OculusTouchDigitalInput: u16 {
-        const A_PRESS = 0x0001;
-        const A_TOUCH = 0x0002;
-        const B_PRESS = 0x0004;
-        const B_TOUCH = 0x0008;
-        const X_PRESS = 0x0010;
-        const X_TOUCH = 0x0020;
-        const Y_PRESS = 0x0040;
-        const Y_TOUCH = 0x0080;
-        const THUMBSTICK_LEFT_PRESS = 0x0100;
-        const THUMBSTICK_LEFT_TOUCH = 0x0200;
-        const THUMBSTICK_RIGHT_PRESS = 0x0400;
-        const THUMBSTICK_RIGHT_TOUCH = 0x0800;
-        const TRIGGER_LEFT_TOUCH = 0x1000;
-        const TRIGGER_RIGHT_TOUCH = 0x2000;
-        const MENU = 0x4000;
-        const HOME = 0x8000;
+    pub struct OculusTouchDigitalInput: u32 {
+        const A_PRESS = 0x00_00_00_01;
+        const A_TOUCH = 0x00_00_00_02;
+        const B_PRESS = 0x00_00_00_04;
+        const B_TOUCH = 0x00_00_00_08;
+        const X_PRESS = 0x00_00_00_10;
+        const X_TOUCH = 0x00_00_00_20;
+        const Y_PRESS = 0x00_00_00_40;
+        const Y_TOUCH = 0x00_00_00_80;
+        const THUMBSTICK_LEFT_PRESS = 0x00_00_01_00;
+        const THUMBSTICK_LEFT_TOUCH = 0x00_00_02_00;
+        const THUMBSTICK_RIGHT_PRESS = 0x00_00_04_00;
+        const THUMBSTICK_RIGHT_TOUCH = 0x00_00_08_00;
+        const TRIGGER_LEFT_TOUCH = 0x00_00_10_00;
+        const TRIGGER_RIGHT_TOUCH = 0x00_00_20_00;
+        const GRIP_LEFT_TOUCH = 0x00_00_40_00;
+        const GRIP_RIGHT_TOUCH = 0x00_00_80_00;
+        const MENU = 0x00_01_00_00;
+        const HOME = 0x00_02_00_00;
     }
 }
 
@@ -369,39 +381,34 @@ bitflags! {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct OculusTouchAnalogInput {
-    motion: MotionDesc,
-    thumbstick_horizontal: f32,
-    thumbstick_vertical: f32,
-    trigger: f32,
-    grip: f32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
 pub enum InputDeviceData {
     Gamepad {
         thumbstick_left_horizontal: f32,
         thumbstick_left_vertical: f32,
         thumbstick_right_horizontal: f32,
         thumbstick_right_vertical: f32,
-        shoulder_left: f32,
-        shoulder_right: f32,
+        trigger_left: f32,
+        trigger_right: f32,
         digital_input: GamepadDigitalInput,
     },
     OculusTouchPair {
-        analog_input: [OculusTouchAnalogInput; 2],
+        thumbstick_left_horizontal: f32,
+        thumbstick_left_vertical: f32,
+        thumbstick_right_horizontal: f32,
+        thumbstick_right_vertical: f32,
+        trigger_left: f32,
+        trigger_right: f32,
+        grip_left: f32,
+        grip_right: f32,
         digital_input: OculusTouchDigitalInput,
     },
     OculusGoController {
-        motion: MotionDesc,
         trigger: f32,
         touchpad_horizontal: f32,
         touchpad_vertical: f32,
-        is_right_hand: bool,
         digital_input: OculusGoDigitalInput,
     },
-    OculusHand(Vec<MotionDesc>),
-    GenericTracker(MotionDesc),
+    OculusHands([Vec<MotionDesc>; 2]),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -413,7 +420,7 @@ pub struct ClientHandshakePacket {
     pub fps: f32,
 
     // this is used to determine type and count of input devices
-    pub input_devices_initial_data: Vec<InputDeviceData>,
+    pub input_device_initial_data: InputDeviceData,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -427,22 +434,31 @@ pub struct ServerHandshakePacket {
     pub target_eye_height: u32,
 }
 
-// Messages are packets without an associated buffer and are not zero-copy
+#[derive(Serialize, Deserialize)]
+pub struct HapticData {
+    pub amplitude: f32,
+    pub duration_seconds: f32,
+    pub frequency: f32,
+}
+
 #[derive(Serialize, Deserialize)]
 pub enum ServerMessage {
+    Haptic([HapticData; 2]),
     Shutdown,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ClientInput {
-    hmd_motion: MotionDesc,
-    devices_data: Vec<InputDeviceData>,
-    additional_vsync_offset_ns: i32,
+pub struct ClientUpdate {
+    pub pose_time_offset_ns: u64,
+    pub hmd_motion: MotionDesc,
+    pub controllers_motion: [MotionDesc; 2],
+    pub input_data: InputDeviceData,
+    pub vsync_offset_ns: i32,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum ClientMessage {
-    Input(ClientInput),
+    Update(Box<ClientUpdate>),
     Statistics(ClientStatistics),
     Disconnected,
 }
@@ -497,24 +513,4 @@ impl SessionDescLoader {
             trace_err!(json::to_string_pretty(&self.session_desc))?
         ))
     }
-}
-
-pub fn load_session_desc(path: &str) -> SessionDesc {
-    if let Ok(file_content) = fs::read_to_string(path) {
-        json::from_str(&file_content).unwrap_or_else(|_| {
-            warn!("Invalid session file. Using default values.");
-            <_>::default()
-        })
-    } else {
-        warn!("Session file not found or inaccessible. Using default values.");
-        <_>::default()
-    }
-}
-
-pub fn save_session_desc(path: &str, session: &SessionDesc) -> StrResult<()> {
-    const TRACE_CONTEXT: &str = "Session";
-    trace_err!(fs::write(
-        path,
-        trace_err!(json::to_string_pretty(session))?
-    ))
 }

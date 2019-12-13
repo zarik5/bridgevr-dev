@@ -64,6 +64,10 @@ impl<K, V> TimeoutMap<K, V> {
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
 }
 
 impl<K: PartialEq, V> TimeoutMap<K, V> {

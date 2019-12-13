@@ -4,6 +4,7 @@ pub use logging::StrResult;
 
 pub mod audio;
 pub mod constants;
+pub mod input_mapping;
 pub mod data;
 pub mod event_timing;
 pub mod ffr;

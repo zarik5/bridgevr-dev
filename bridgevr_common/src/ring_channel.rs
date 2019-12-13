@@ -27,7 +27,6 @@ pub trait Collection<K, V> {
     fn remove(&mut self, key: &K) -> Option<(K, V)>;
     fn remove_any(&mut self) -> Option<(K, V)>;
     fn remove_expired(&mut self) -> Vec<V>;
-    fn len(&self) -> usize;
 }
 
 impl<T> Collection<(), T> for VecDeque<T> {
@@ -46,9 +45,6 @@ impl<T> Collection<(), T> for VecDeque<T> {
     fn remove_expired(&mut self) -> Vec<T> {
         vec![]
     }
-    fn len(&self) -> usize {
-        VecDeque::len(self)
-    }
 }
 
 impl<K: PartialEq, V> Collection<K, V> for TimeoutMap<K, V> {
@@ -66,9 +62,6 @@ impl<K: PartialEq, V> Collection<K, V> for TimeoutMap<K, V> {
     }
     fn remove_expired(&mut self) -> Vec<V> {
         TimeoutMap::remove_expired(self)
-    }
-    fn len(&self) -> usize {
-        TimeoutMap::len(self)
     }
 }
 

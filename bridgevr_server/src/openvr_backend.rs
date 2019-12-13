@@ -1,9 +1,10 @@
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{data::*, ring_channel::*, *};
-use log::warn;
+use bridgevr_common::{data::*, input_mapping::*, ring_channel::*, *};
+use log::*;
 use openvr_driver as vr;
 use parking_lot::Mutex;
 use std::{
+    collections::HashMap,
     sync::{mpsc::*, Arc},
     thread,
     time::*,
@@ -51,7 +52,7 @@ const DEFAULT_DRIVER_POSE: vr::DriverPose_t = vr::DriverPose_t {
     deviceIsConnected: true,
 };
 
-// on VirtualDislay interface the same texture is used for left and right eye.
+// On VirtualDislay interface the same texture is used for left and right eye.
 const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [Bounds; 2] = [
     // left
     Bounds {
@@ -69,12 +70,32 @@ const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [Bounds; 2] = [
     },
 ];
 
+fn pose_from_openvr_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
+    use nalgebra::{Matrix3, UnitQuaternion};
+
+    let m = matrix.m;
+    let na_matrix = Matrix3::new(
+        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
+    );
+    let na_quat = UnitQuaternion::from_matrix(&na_matrix);
+    let orientation = [na_quat[3], na_quat[0], na_quat[1], na_quat[2]];
+    let position = [m[0][3], m[1][3], m[2][3]];
+
+    Pose {
+        position,
+        orientation,
+    }
+}
+
 struct OpenvrSettings {
     target_eye_width: u32,
     target_eye_height: u32,
     fov: [Fov; 2],
     block_standby: bool,
     frame_interval: Duration,
+    hmd_custom_properties: Vec<OpenvrProp>,
+    controllers_custom_properties: [Vec<OpenvrProp>; 2],
+    input_mapping: Vec<(String, InputType, Vec<String>)>,
 }
 
 fn create_openvr_settings(
@@ -116,30 +137,39 @@ fn create_openvr_settings(
             DEFAULT_FRAME_INTERVAL
         };
 
+    let hmd_custom_properties = if let Some(settings) = settings {
+        settings.openvr.hmd_custom_properties.clone()
+    } else {
+        vec![]
+    };
+
+    let controllers_custom_properties = if let Some(settings) = settings {
+        settings.openvr.controllers_custom_properties.clone()
+    } else {
+        [vec![], vec![]]
+    };
+
+    let input_mapping = if let Some(settings) = settings {
+        settings.openvr.input_mapping.clone()
+    } else {
+        vec![]
+    };
+
     OpenvrSettings {
         target_eye_width,
         target_eye_height,
         fov,
         block_standby,
         frame_interval,
+        hmd_custom_properties,
+        controllers_custom_properties,
+        input_mapping,
     }
 }
 
-fn pose_from_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
-    use nalgebra::{Matrix3, UnitQuaternion};
-
-    let m = matrix.m;
-    let na_matrix = Matrix3::new(
-        m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
-    );
-    let na_quat = UnitQuaternion::from_matrix(&na_matrix);
-    let orientation = [na_quat[3], na_quat[0], na_quat[1], na_quat[2]];
-    let position = [m[0][3], m[1][3], m[2][3]];
-
-    Pose {
-        position,
-        orientation,
-    }
+fn should_restart(old_settings: &OpenvrSettings, new_settings: &OpenvrSettings) -> bool {
+    new_settings.fov != old_settings.fov
+        || new_settings.frame_interval != old_settings.frame_interval
 }
 
 // The "contexts" are the structs given to the openvr callbacks and are internally mutable.
@@ -151,6 +181,7 @@ struct HmdContext {
     compositor: Arc<Mutex<Compositor>>,
     present_producer: Mutex<Option<Producer<PresentData>>>,
     sync_handle_mutex: Mutex<Option<Arc<Mutex<()>>>>,
+    controller_input_to_component_map: Mutex<Option<HashMap<String, vr::VRInputComponentHandle_t>>>,
     pose: Mutex<vr::DriverPose_t>,
     latest_vsync: Mutex<(Instant, u64)>,
     swap_texture_sets_desc: Mutex<Vec<(usize, [u64; 3], u32)>>,
@@ -224,21 +255,29 @@ fn create_virtual_display_callbacks(
                 .rev()
                 .find(|ft| ft.m_nFrameIndex == present_info.nFrameId as u32);
             if let Some(frame_timing) = maybe_frame_timing {
-                let pose = pose_from_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
+                let pose =
+                    pose_from_openvr_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
                 if let Some(present_producer) = &mut *context.present_producer.lock() {
-                    let res = present_producer.fill(TIMEOUT, |present_data| {
-                        let handle = present_info.backbufferTextureHandle;
-                        let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
-                        present_data.frame_index = present_info.nFrameId;
-                        present_data.layers =
-                            vec![([(handle, left_bounds), (handle, right_bounds)], pose)];
-                        present_data.sync_texture_handle = handle;
-                        Ok(())
-                    });
+                    let res = present_producer
+                        .fill(TIMEOUT, |present_data| {
+                            let handle = present_info.backbufferTextureHandle;
+                            let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
+                            present_data.frame_index = present_info.nFrameId;
+                            present_data.layers =
+                                vec![([(handle, left_bounds), (handle, right_bounds)], pose)];
+                            present_data.sync_texture_handle = handle;
+                            Ok(())
+                        })
+                        .map_err(|e| debug!("{:?}", e));
                     if res.is_ok() {
-                        present_producer.wait_for_one(TIMEOUT).ok();
+                        present_producer
+                            .wait_for_one(TIMEOUT)
+                            .map_err(|e| debug!("{:?}", e))
+                            .ok();
                     }
                 }
+            } else {
+                debug!("frame timing not found");
             }
         },
         wait_for_present: |context| {
@@ -285,7 +324,12 @@ fn create_driver_direct_mode_callbacks(
                 .position(|(_, handles, _)| handles.contains(&shared_texture_handle));
             if let Some(idx) = maybe_set_desc_idx {
                 let (id, _, _) = swap_texture_sets_desc.remove(idx);
-                display_err!(context.compositor.lock().destroy_swap_texture_set(id)).ok();
+                context
+                    .compositor
+                    .lock()
+                    .destroy_swap_texture_set(id)
+                    .map_err(|e| warn!("{}", e))
+                    .ok();
             }
         },
         destroy_all_swap_texture_sets: |context, pid| {
@@ -298,7 +342,12 @@ fn create_driver_direct_mode_callbacks(
                 .collect();
             for idx in set_desc_idxs {
                 let (id, _, _) = swap_texture_sets_desc.remove(idx);
-                display_err!(context.compositor.lock().destroy_swap_texture_set(id)).ok();
+                context
+                    .compositor
+                    .lock()
+                    .destroy_swap_texture_set(id)
+                    .map_err(|e| warn!("{}", e))
+                    .ok();
             }
         },
         get_next_swap_texture_set_index: |_, _shared_texture_handles, indices| {
@@ -322,7 +371,7 @@ fn create_driver_direct_mode_callbacks(
                     (eye_layer.hTexture, bounds)
                 })
                 .collect();
-            let pose = pose_from_matrix(pose);
+            let pose = pose_from_openvr_matrix(pose);
             context
                 .current_layers
                 .lock()
@@ -330,14 +379,19 @@ fn create_driver_direct_mode_callbacks(
         },
         present: |context, sync_texture| {
             if let Some(present_producer) = &mut *context.present_producer.lock() {
-                let res = present_producer.fill(TIMEOUT, |present_data| {
-                    present_data.frame_index = context.latest_vsync.lock().1;
-                    present_data.layers = context.current_layers.lock().drain(..).collect();
-                    present_data.sync_texture_handle = sync_texture;
-                    Ok(())
-                });
+                let res = present_producer
+                    .fill(TIMEOUT, |present_data| {
+                        present_data.frame_index = context.latest_vsync.lock().1;
+                        present_data.layers = context.current_layers.lock().drain(..).collect();
+                        present_data.sync_texture_handle = sync_texture;
+                        Ok(())
+                    })
+                    .map_err(|e| debug!("{:?}", e));
                 if res.is_ok() {
-                    present_producer.wait_for_one(TIMEOUT).ok();
+                    present_producer
+                        .wait_for_one(TIMEOUT)
+                        .map_err(|e| debug!("{:?}", e))
+                        .ok();
                 }
             }
         },
@@ -354,113 +408,6 @@ fn create_driver_direct_mode_callbacks(
         },
         // todo: do something here?
         get_frame_timing: |_, _frame_timing| (),
-    }
-}
-
-fn create_hmd_cllbacks(
-    hmd_context: Arc<HmdContext>,
-) -> vr::TrackedDeviceServerDriverCallbacks<HmdContext> {
-    vr::TrackedDeviceServerDriverCallbacks {
-        context: hmd_context.clone(),
-        activate: |context, object_id| {
-            *context.id.lock() = Some(object_id);
-            let container =
-                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
-
-            //todo: set common props
-
-            // OpenvrClient::set_custom_props(
-            //     container,
-            //     &context.settings.openvr.hmd_custom_properties,
-            // );
-
-            vr::VRInitError_None
-        },
-        deactivate: |context| {
-            context
-                .shutdown_signal_sender
-                .lock()
-                .send(ShutdownSignal::BackendShutdown)
-                .ok();
-        },
-        enter_standby: |_| (),
-        debug_request: |_, request| format!("debug request: {}", request),
-        get_pose: |context| *context.pose.lock(),
-    }
-}
-
-struct ControllerContext {
-    id: Mutex<Option<u32>>,
-    settings: Arc<Mutex<OpenvrSettings>>,
-    pose: Mutex<vr::DriverPose_t>,
-}
-
-fn create_controller_callbacks(
-    controller_context: Arc<ControllerContext>,
-) -> vr::TrackedDeviceServerDriverCallbacks<ControllerContext> {
-    vr::TrackedDeviceServerDriverCallbacks {
-        context: controller_context,
-        activate: |context, object_id| {
-            *context.id.lock() = Some(object_id);
-            let container =
-                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
-
-            //todo: set common props
-
-            // OpenvrClient::set_custom_props(
-            //     container,
-            //     &context.settings.openvr.hmd_custom_properties,
-            // );
-
-            vr::VRInitError_None
-        },
-        deactivate: |_| (),
-        enter_standby: |_| (),
-        debug_request: |_, request| format!("debug request: {}", request),
-        get_pose: |context| *context.pose.lock(),
-    }
-}
-
-pub struct ServerContext {
-    settings: Arc<Mutex<OpenvrSettings>>,
-    shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
-    hmd: vr::TrackedDeviceServerDriver<HmdContext>,
-    controllers: Vec<vr::TrackedDeviceServerDriver<ControllerContext>>,
-}
-
-fn create_server_callbacks(
-    server_context: Arc<ServerContext>,
-) -> vr::ServerTrackedDeviceProviderCallbacks<ServerContext> {
-    vr::ServerTrackedDeviceProviderCallbacks {
-        context: server_context,
-        init: |context, driver_context| {
-            unsafe { vr::init_server_driver_context(driver_context) };
-
-            let mut device_id_iter = 0..;
-
-            unsafe {
-                vr::server_driver_host_tracked_device_added(
-                    &(device_id_iter.next().unwrap()).to_string(),
-                    vr::TrackedDeviceClass_HMD,
-                    &context.hmd,
-                )
-            };
-
-            vr::VRInitError_None
-        },
-        cleanup: |context| unsafe {
-            context
-                .shutdown_signal_sender
-                .lock()
-                .send(ShutdownSignal::BackendShutdown)
-                .ok();
-
-            vr::cleanup_driver_context();
-        },
-        run_frame: |_| (),
-        should_block_standby_mode: |context| context.settings.lock().block_standby,
-        enter_standby: |_| (),
-        leave_standby: |_| (),
     }
 }
 
@@ -493,16 +440,144 @@ fn set_custom_props(container: vr::PropertyContainerHandle_t, props: &[OpenvrPro
         };
 
         if res > 0 {
-            warn!("Failed to set property {:?} with code={}", prop, res);
+            warn!("Failed to set openvr property {:?} with code={}", prop, res);
         }
     }
 }
 
-fn should_restart(old_settings: &OpenvrSettings, new_settings: &OpenvrSettings) -> bool {
-    new_settings.target_eye_width != old_settings.target_eye_width
-        || new_settings.target_eye_height != old_settings.target_eye_height
-        || new_settings.fov != old_settings.fov
-        || new_settings.frame_interval != old_settings.frame_interval
+fn create_hmd_callbacks(
+    hmd_context: Arc<HmdContext>,
+) -> vr::TrackedDeviceServerDriverCallbacks<HmdContext> {
+    vr::TrackedDeviceServerDriverCallbacks {
+        context: hmd_context.clone(),
+        activate: |context, object_id| {
+            *context.id.lock() = Some(object_id);
+            let container =
+                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
+
+            //todo: set default props
+
+            set_custom_props(container, &context.settings.lock().hmd_custom_properties);
+
+            let mut component_map = HashMap::new();
+            for (path, input_type, controller_paths) in &context.settings.lock().input_mapping {
+                let maybe_component = unsafe {
+                    match input_type {
+                        InputType::Boolean => vr::driver_input_create_boolean(container, &path),
+                        InputType::NormalizedOneSided => vr::driver_input_create_scalar(
+                            container,
+                            &path,
+                            vr::VRScalarType_Absolute,
+                            vr::VRScalarUnits_NormalizedOneSided,
+                        ),
+                        InputType::NormalizedTwoSided => vr::driver_input_create_scalar(
+                            container,
+                            &path,
+                            vr::VRScalarType_Absolute,
+                            vr::VRScalarUnits_NormalizedTwoSided,
+                        ),
+                        _ => unimplemented!(),
+                    }
+                };
+                if let Ok(component) = maybe_component.map_err(|e| warn!("{}: {}", path, e)) {
+                    for controller_path in controller_paths {
+                        component_map.insert(controller_path.to_owned(), component);
+                    }
+                }
+            }
+            *context.controller_input_to_component_map.lock() = Some(component_map);
+
+            vr::VRInitError_None
+        },
+        deactivate: |context| {
+            context
+                .shutdown_signal_sender
+                .lock()
+                .send(ShutdownSignal::BackendShutdown)
+                .map_err(|e| debug!("{}", e))
+                .ok();
+        },
+        enter_standby: |_| (),
+        debug_request: |_, request| format!("debug request: {}", request),
+        get_pose: |context| *context.pose.lock(),
+    }
+}
+
+struct ControllerContext {
+    index: usize, // 0: left, 1: right
+    id: Mutex<Option<u32>>,
+    settings: Arc<Mutex<OpenvrSettings>>,
+    pose: Mutex<vr::DriverPose_t>,
+}
+
+fn create_controller_callbacks(
+    controller_context: Arc<ControllerContext>,
+) -> vr::TrackedDeviceServerDriverCallbacks<ControllerContext> {
+    vr::TrackedDeviceServerDriverCallbacks {
+        context: controller_context,
+        activate: |context, object_id| {
+            *context.id.lock() = Some(object_id);
+            let container =
+                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
+
+            //todo: set default props
+
+            set_custom_props(
+                container,
+                &context.settings.lock().controllers_custom_properties[context.index],
+            );
+
+            vr::VRInitError_None
+        },
+        deactivate: |_| (),
+        enter_standby: |_| (),
+        debug_request: |_, request| format!("debug request: {}", request),
+        get_pose: |context| *context.pose.lock(),
+    }
+}
+
+pub struct ServerContext {
+    settings: Arc<Mutex<OpenvrSettings>>,
+    shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
+    hmd: vr::TrackedDeviceServerDriver<HmdContext>,
+    _controllers: Vec<vr::TrackedDeviceServerDriver<ControllerContext>>,
+}
+
+fn create_server_callbacks(
+    server_context: Arc<ServerContext>,
+) -> vr::ServerTrackedDeviceProviderCallbacks<ServerContext> {
+    vr::ServerTrackedDeviceProviderCallbacks {
+        context: server_context,
+        init: |context, driver_context| {
+            unsafe { vr::init_server_driver_context(driver_context) };
+
+            let mut device_id_iter = 0..;
+
+            unsafe {
+                vr::server_driver_host_tracked_device_added(
+                    &(device_id_iter.next().unwrap()).to_string(),
+                    vr::TrackedDeviceClass_HMD,
+                    &context.hmd,
+                )
+            };
+
+            vr::VRInitError_None
+        },
+        cleanup: |context| unsafe {
+            context
+                .shutdown_signal_sender
+                .lock()
+                .send(ShutdownSignal::BackendShutdown)
+                .map_err(|e| debug!("{}", e))
+                .ok();
+
+            vr::cleanup_driver_context();
+        },
+        run_frame: |_| (),
+        should_block_standby_mode: |context| context.settings.lock().block_standby,
+        enter_standby: |_| (),
+        leave_standby: |_| (),
+    }
 }
 
 pub struct OpenvrBackend {
@@ -527,6 +602,7 @@ impl OpenvrBackend {
             compositor,
             present_producer: Mutex::new(None),
             sync_handle_mutex: Mutex::new(None),
+            controller_input_to_component_map: Mutex::new(None),
             pose: Mutex::new(DEFAULT_DRIVER_POSE),
             latest_vsync: Mutex::new((Instant::now(), 0)),
             swap_texture_sets_desc: Mutex::new(vec![]),
@@ -570,18 +646,20 @@ impl OpenvrBackend {
             }
         }
 
-        let hmd_callbacks = create_hmd_cllbacks(hmd_context.clone());
+        let hmd_callbacks = create_hmd_callbacks(hmd_context.clone());
 
         let hmd = unsafe { vr::TrackedDeviceServerDriver::new(hmd_callbacks, hmd_components) };
 
-        let controller_contexts = vec![
-            Arc::new(ControllerContext {
-                id: Mutex::new(None),
-                settings: openvr_settings.clone(),
-                pose: Mutex::new(DEFAULT_DRIVER_POSE)
-            });
-            2
-        ];
+        let controller_contexts: Vec<_> = (0..2)
+            .map(|i| {
+                Arc::new(ControllerContext {
+                    index: i,
+                    id: Mutex::new(None),
+                    settings: openvr_settings.clone(),
+                    pose: Mutex::new(DEFAULT_DRIVER_POSE),
+                })
+            })
+            .collect();
         let mut controllers = vec![];
         for context in &controller_contexts {
             let controller_callbacks = create_controller_callbacks(context.clone());
@@ -596,7 +674,7 @@ impl OpenvrBackend {
             settings: openvr_settings,
             shutdown_signal_sender,
             hmd,
-            controllers,
+            _controllers: controllers,
         });
 
         let server_callbacks = create_server_callbacks(server_context);
@@ -622,7 +700,7 @@ impl OpenvrBackend {
         if should_restart(&*self.hmd_context.settings.lock(), &new_settings) {
             unsafe {
                 vr::server_driver_host_request_restart(
-                    "Client properties changed. Restarting SteamVR.",
+                    "Critical properties changed. Restarting SteamVR.",
                     "", // todo: steamvr_launcher,
                     "", // todo: steamvr_launcher_args,
                     "", // todo: steamvr_launcher_directory,
@@ -633,6 +711,8 @@ impl OpenvrBackend {
             *self.hmd_context.settings.lock() = new_settings;
             *self.hmd_context.present_producer.lock() = Some(present_producer);
             *self.hmd_context.sync_handle_mutex.lock() = Some(sync_handle_mutex);
+
+            // todo: notify settings changes to openvr
         }
     }
 
@@ -641,30 +721,68 @@ impl OpenvrBackend {
         *self.hmd_context.sync_handle_mutex.lock() = None;
     }
 
-    fn update_pose(&self, object_id: &Mutex<Option<u32>>, motion: &MotionDesc) {
-        if let Some(id) = *object_id.lock() {
-            // let mut driver_pose = driver_pose.lock().unwrap();
-            // let p = new_pose;
-            // *driver_pose = vr::DriverPose_t {
-            //     vecWorldFromDriverTranslation: [p.0[3] as _, p.0[7] as _, p.0[11] as _],
-            //     ..<_>::default() // todo: remove and implement manually
-            // };
+    fn update_pose(
+        object_id: Option<u32>,
+        motion: &MotionDesc,
+        driver_pose: &mut vr::DriverPose_t,
+        time_offset: Duration,
+    ) {
+        if let Some(id) = object_id {
+            let p = motion.pose.position;
+            let o = motion.pose.orientation;
+            let v = motion.linear_velocity;
+            let av = motion.angular_velocity;
+            driver_pose.poseTimeOffset = time_offset.as_secs_f64();
+            driver_pose.vecPosition = [p[0] as _, p[1] as _, p[2] as _];
+            driver_pose.vecVelocity = [v[0] as _, v[1] as _, v[2] as _];
+            driver_pose.qRotation = vr::HmdQuaternion_t {
+                w: o[0] as _,
+                x: o[1] as _,
+                y: o[2] as _,
+                z: o[3] as _,
+            };
+            driver_pose.vecAngularVelocity = [av[0] as _, av[1] as _, av[2] as _];
 
-            // unsafe { vr::server_driver_host_tracked_device_pose_updated(id, &driver_pose) };
+            unsafe { vr::server_driver_host_tracked_device_pose_updated(id, driver_pose) };
         }
     }
 
-    pub fn update_input(&mut self, client_input: &ClientInput) {
-        // self.update_pose(&self.hmd_context.id, hmd_motion);
+    pub fn update_input(&mut self, client_update: &ClientUpdate) {
+        let time_offset = Duration::from_nanos(client_update.pose_time_offset_ns);
+        Self::update_pose(
+            *self.hmd_context.id.lock(),
+            &client_update.hmd_motion,
+            &mut self.hmd_context.pose.lock(),
+            time_offset,
+        );
 
-        // for (i, motion) in controllers_motion.iter().enumerate() {
-        //     // let controller_context = &self.controllers[i].1;
-        //     // self.update_pose(
-        //     //     &controller_context.object_id,
-        //     //     pose,
-        //     //     &controller_context.pose,
-        //     // );
-        // }
+        for (i, motion) in client_update.controllers_motion.iter().enumerate() {
+            let context = &self.controller_contexts[i];
+            Self::update_pose(
+                *context.id.lock(),
+                motion,
+                &mut context.pose.lock(),
+                time_offset,
+            );
+        }
+
+        let maybe_component_map = self.hmd_context.controller_input_to_component_map.lock();
+        if let Some(components) = &*maybe_component_map {
+            for (path, value) in input_device_data_to_str_value(&client_update.input_data) {
+                unsafe {
+                    match value {
+                        InputValue::Boolean(value) => {
+                            vr::driver_input_update_boolean(components[path], value, 0_f64);
+                        }
+                        InputValue::NormalizedOneSided(value)
+                        | InputValue::NormalizedTwoSided(value) => {
+                            vr::driver_input_update_scalar(components[path], value, 0_f64);
+                        }
+                        _ => unimplemented!(),
+                    }
+                }
+            }
+        }
     }
 
     pub fn server_native(&self) -> Arc<vr::ServerTrackedDeviceProvider<ServerContext>> {

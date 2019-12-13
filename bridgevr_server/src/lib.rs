@@ -76,6 +76,13 @@ fn begin_server_loop(
                 return Err(());
             }
 
+            {
+                let mut session_desc_loader = session_desc_loader.lock();
+                session_desc_loader.get_mut().last_client_handshake_packet =
+                    Some(client_handshake_packet.clone());
+                session_desc_loader.save().map_err(|e| warn!("{}", e)).ok();
+            }
+
             let (target_eye_width, target_eye_height) = match &settings.video.frame_size {
                 FrameSize::Scale(scale) => {
                     let (native_eye_width, native_eye_height) =
@@ -105,7 +112,7 @@ fn begin_server_loop(
                         let client_statistics = client_statistics.clone();
                         let openvr_backend = openvr_backend.clone();
                         move |message| match message {
-                            ClientMessage::Input(input) => {
+                            ClientMessage::Update(input) => {
                                 openvr_backend.lock().update_input(&input)
                             }
                             ClientMessage::Statistics(client_stats) => {
@@ -184,12 +191,14 @@ fn begin_server_loop(
                 slice_producers,
             ))?;
 
-            openvr_backend.lock().initialize_for_client_or_request_restart(
-                &settings,
-                session_desc_loader.lock().get_mut(),
-                present_producer,
-                sync_handle_mutex,
-            );
+            openvr_backend
+                .lock()
+                .initialize_for_client_or_request_restart(
+                    &settings,
+                    session_desc_loader.lock().get_mut(),
+                    present_producer,
+                    sync_handle_mutex,
+                );
 
             let statistics_interval = Duration::from_secs(1);
             let res = loop {

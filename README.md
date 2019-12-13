@@ -62,6 +62,7 @@ If you find that your OS/hardware is not supported you can propose support openi
 * Multi socket streaming to increase bitrate on Oculus Quest
 * Automatic SteamVR Chaperone setup
 * Gamma correction
+* Differential settings saving/loading
 
 Any help on supporting new features or platforms is gratly appreciated!
 
