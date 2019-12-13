@@ -49,7 +49,7 @@ fn begin_server_loop(
 
     let try_connect = {
         let compositor = compositor.clone();
-        let openvr_server = openvr_backend.clone();
+        let openvr_backend = openvr_backend.clone();
         let shutdown_signal_sender = shutdown_signal_sender.clone();
 
         // if any error is encountered, display it immediately to avoid waiting for every object to
@@ -103,14 +103,13 @@ fn begin_server_loop(
                     {
                         let shutdown_signal_sender = shutdown_signal_sender.clone();
                         let client_statistics = client_statistics.clone();
+                        let openvr_backend = openvr_backend.clone();
                         move |message| match message {
-                            ClientMessage::Input {
-                                hmd_motion,
-                                devices_data,
-                                additional_vsync_offset_ns,
-                            } => {}
+                            ClientMessage::Input(input) => {
+                                openvr_backend.lock().update_input(&input)
+                            }
                             ClientMessage::Statistics(client_stats) => {
-                                *client_statistics.lock() = client_stats;
+                                *client_statistics.lock() = client_stats
                             }
                             ClientMessage::Disconnected => {
                                 shutdown_signal_sender
@@ -174,21 +173,22 @@ fn begin_server_loop(
             };
 
             let (present_producer, present_consumer) = queue_channel_split();
-            let wait_for_present_mutex = Arc::new(Mutex::new(()));
+            let sync_handle_mutex = Arc::new(Mutex::new(()));
 
             display_err!(compositor.lock().initialize_for_client(
                 target_eye_width,
                 target_eye_height,
                 settings.video.foveated_rendering.clone().into_option(),
                 present_consumer,
-                wait_for_present_mutex.clone(),
+                sync_handle_mutex.clone(),
                 slice_producers,
             ))?;
 
-            openvr_server.lock().initialize_for_client(
-                settings.clone(),
+            openvr_backend.lock().initialize_for_client_or_request_restart(
+                &settings,
+                session_desc_loader.lock().get_mut(),
                 present_producer,
-                wait_for_present_mutex,
+                sync_handle_mutex,
             );
 
             let statistics_interval = Duration::from_secs(1);
@@ -308,11 +308,7 @@ openvr_server_entry_point!({
     }
 
     display_err!(EMPTY_SYSTEM.as_ref()).map(|sys| {
-        let shutdown_signal_channel = sys
-            .shutdown_signal_channel_tmp
-            .lock()
-            .take()
-            .unwrap();
+        let shutdown_signal_channel = sys.shutdown_signal_channel_tmp.lock().take().unwrap();
         display_err!(begin_server_loop(
             sys.compositor.clone(),
             sys.openvr_backend.clone(),

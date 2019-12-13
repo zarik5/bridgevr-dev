@@ -37,6 +37,7 @@ pub struct EventTiming {
     history_count: f32,
     latency_average_s: f32,
     latency_variance_s: f32,
+    offset_divider: u32,
 }
 
 impl EventTiming {
@@ -46,6 +47,7 @@ impl EventTiming {
         fps: f32,
         defaut_latency: Duration,
         history_mean_lifetime: Duration,
+        offset_divider: u32,
     ) -> Self {
         let inverse_q_of_prob =
             inverse_q_of_probability(accepted_misses as f32 / over_duration.as_secs_f32(), fps);
@@ -57,6 +59,7 @@ impl EventTiming {
             history_count: history_mean_lifetime.as_secs_f32() * fps,
             latency_average_s: defaut_latency.as_secs_f32(),
             latency_variance_s: defaut_latency.as_secs_f32() / inverse_q_of_prob,
+            offset_divider,
         }
     }
 
@@ -107,6 +110,7 @@ impl EventTiming {
             self.unmatched_pop_times.remove(&id);
         }
 
-        self.get_latency_offset()
+        // dividing by the history depth 
+        self.get_latency_offset() / self.offset_divider
     }
 }

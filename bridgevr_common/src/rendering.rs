@@ -15,17 +15,17 @@ use gfx_hal::{
     *,
 };
 use log::{debug, error};
+use parking_lot::Mutex;
 use std::{
     ffi::c_void,
     fmt::Debug,
     iter,
     mem::ManuallyDrop,
     mem::*,
-    ptr::{self, *},
-    sync::{Arc},
+    ptr,
+    sync::Arc,
     time::Duration,
 };
-use parking_lot::Mutex;
 
 pub use gfx_hal::format::Format;
 

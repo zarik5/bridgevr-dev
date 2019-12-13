@@ -23,7 +23,7 @@ impl<T> Switch<T> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
 pub struct Fov {
     pub left: f32,
     pub top: f32,
@@ -31,18 +31,17 @@ pub struct Fov {
     pub bottom: f32,
 }
 
-// Row major 3x4 matrix
-#[derive(Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub struct Pose {
-    orientation: [f32; 4],
-    position: [f32; 3],
+    pub position: [f32; 3],
+    pub orientation: [f32; 4],
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MotionDesc {
-    pose: Pose,
-    linear_velocity: [f32; 3],
-    angular_velocity: [f32; 3],
+    pub pose: Pose,
+    pub linear_velocity: [f32; 3],
+    pub angular_velocity: [f32; 3],
 }
 
 // #[derive(Serialize, Deserialize, Clone)]
@@ -411,6 +410,7 @@ pub struct ClientHandshakePacket {
     pub version: Version,
     pub native_eye_resolution: (u32, u32),
     pub fov: [Fov; 2],
+    pub fps: f32,
 
     // this is used to determine type and count of input devices
     pub input_devices_initial_data: Vec<InputDeviceData>,
@@ -434,12 +434,15 @@ pub enum ServerMessage {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct ClientInput {
+    hmd_motion: MotionDesc,
+    devices_data: Vec<InputDeviceData>,
+    additional_vsync_offset_ns: i32,
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum ClientMessage {
-    Input {
-        hmd_motion: MotionDesc,
-        devices_data: Vec<InputDeviceData>,
-        additional_vsync_offset_ns: i32,
-    },
+    Input(ClientInput),
     Statistics(ClientStatistics),
     Disconnected,
 }

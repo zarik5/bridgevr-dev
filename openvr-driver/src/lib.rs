@@ -854,16 +854,19 @@ forward_fns! {
         arguments: &str,
         working_directory: &str
     ),
-    [custom] unsafe fn server_driver_host_get_frame_timings() -> Vec<Compositor_FrameTiming> {
-        let mut timing_vec = vec![];
-        let mut timing = Compositor_FrameTiming {
-            m_nSize: size_of::<Compositor_FrameTiming>() as _,
-            ..<_>::default()
-        };
-        while private::vrServerDriverHostGetFrameTimings(&mut timing, 1) == 1 {
-            timing_vec.push(timing);
-        }
-        timing_vec
+    [custom] unsafe fn server_driver_host_get_frame_timings(
+        frames_count: usize
+    ) -> Vec<Compositor_FrameTiming> {
+        let mut timing_vec = vec![Compositor_FrameTiming {
+                m_nSize: size_of::<Compositor_FrameTiming>() as _,
+                ..<_>::default()
+            }; frames_count];
+
+        let filled_count = private::vrServerDriverHostGetFrameTimings(
+            timing_vec.as_mut_ptr(),
+            frames_count as u32
+        );
+        Vec::from(&timing_vec[0..filled_count as _])
     },
 
     vrWatchdogWakeUp => fn watchdog_wake_up(device_class: ETrackedDeviceClass),

@@ -27,6 +27,7 @@ pub trait Collection<K, V> {
     fn remove(&mut self, key: &K) -> Option<(K, V)>;
     fn remove_any(&mut self) -> Option<(K, V)>;
     fn remove_expired(&mut self) -> Vec<V>;
+    fn len(&self) -> usize;
 }
 
 impl<T> Collection<(), T> for VecDeque<T> {
@@ -44,6 +45,9 @@ impl<T> Collection<(), T> for VecDeque<T> {
     }
     fn remove_expired(&mut self) -> Vec<T> {
         vec![]
+    }
+    fn len(&self) -> usize {
+        VecDeque::len(self)
     }
 }
 
@@ -63,9 +67,11 @@ impl<K: PartialEq, V> Collection<K, V> for TimeoutMap<K, V> {
     fn remove_expired(&mut self) -> Vec<V> {
         TimeoutMap::remove_expired(self)
     }
+    fn len(&self) -> usize {
+        TimeoutMap::len(self)
+    }
 }
 
-// If not explicitely calling add(), a Producer does not actually create Vs but only modify them.
 pub struct Producer<V, K = ()> {
     sender: Sender<(K, V)>,
     receiver: Receiver<V>,
@@ -77,11 +83,14 @@ impl<K, V> Producer<V, K> {
         self.queue.push_back(empty);
     }
 
-    pub fn wait_for_empty(&mut self, timeout: Duration) -> RingBufResult {
-        let value = self.receiver
+    pub fn wait_for_one(&mut self, timeout: Duration) -> RingBufResult {
+        if self.queue.is_empty() {
+            let value = self
+                .receiver
                 .recv_timeout(timeout)
                 .map_err(recv_to_ring_buffer_err)?;
-        self.queue.push_back(value);
+            self.queue.push_back(value);
+        }
         Ok(())
     }
 
@@ -116,7 +125,9 @@ pub struct Consumer<V, K = (), C = VecDeque<V>> {
 
 impl<K, V, C: Collection<K, V>> Consumer<V, K, C> {
     pub fn push(&self, empty: V) -> RingBufResult {
-        self.sender.send(empty).map_err(|_| RingChannelError::Shutdown)
+        self.sender
+            .send(empty)
+            .map_err(|_| RingChannelError::Shutdown)
     }
 
     fn consume_element(
@@ -132,7 +143,9 @@ impl<K, V, C: Collection<K, V>> Consumer<V, K, C> {
                 .map_err(recv_to_ring_buffer_err)?
         };
         if callback(&k, &mut v).is_ok() {
-            self.sender.send(v).map_err(|_| RingChannelError::Shutdown)?;
+            self.sender
+                .send(v)
+                .map_err(|_| RingChannelError::Shutdown)?;
         } else {
             self.buffer.push_front(k, v);
         }
@@ -170,7 +183,9 @@ impl<K: PartialEq, V, C: Collection<K, V>> Consumer<V, K, C> {
         };
 
         if callback(&mut v).is_ok() {
-            self.sender.send(v).map_err(|_| RingChannelError::Shutdown)?;
+            self.sender
+                .send(v)
+                .map_err(|_| RingChannelError::Shutdown)?;
         } else {
             self.buffer.push_front(k, v);
         }

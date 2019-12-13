@@ -2,29 +2,41 @@ use crate::video_encoder::aligned_resolution;
 use bridgevr_common::{
     data::*,
     ffr::*,
+    frame_slices::*,
     rendering::*,
     ring_channel::*,
     thread_loop::{self, ThreadLoop},
     *,
-    frame_slices::*,
 };
-use std::{collections::HashMap, ops::RangeFrom, sync::Arc, time::Duration};
 use parking_lot::Mutex;
+use std::{collections::HashMap, ops::RangeFrom, sync::Arc, time::Duration};
 
 const TRACE_CONTEXT: &str = "Server Graphics";
 
 const TIMEOUT: Duration = Duration::from_millis(100);
 
 pub struct FrameSlice {
-    index: usize,
-    texture: Arc<Texture>,
-    pose: Pose,
-    is_idr: bool,
+    pub index: usize,
+    pub texture: Arc<Texture>,
+    pub pose: Pose,
+    pub force_idr_slice_idxs: Vec<usize>,
 }
 
+#[derive(Clone, Copy)]
+pub struct Bounds {
+    pub u_min: f32,
+    pub v_min: f32,
+    pub u_max: f32,
+    pub v_max: f32,
+}
+
+pub type LayerDesc = ([(u64, Bounds); 2], Pose);
+
 pub struct PresentData {
-    layers: Vec<([u64; 2], Pose)>,
-    shared_texture_handle: u64,
+    pub frame_index: u64,
+    pub layers: Vec<LayerDesc>,
+    pub sync_texture_handle: u64,
+    pub force_idr_slice_idxs: Vec<usize>,
 }
 
 // This is able to create and destroy textures even when the client is not connected, so SteamVR
@@ -40,10 +52,7 @@ pub struct Compositor {
 impl Compositor {
     fn empty_rendering_loop(present_consumer: Arc<Mutex<Consumer<PresentData>>>) -> ThreadLoop {
         thread_loop::spawn(move || {
-            present_consumer
-                .lock()
-                .consume(TIMEOUT, |_| Ok(()))
-                .ok();
+            present_consumer.lock().consume(TIMEOUT, |_| Ok(())).ok();
         })
     }
 
@@ -103,7 +112,7 @@ impl Compositor {
         target_eye_height: u32,
         ffr_desc: Option<data::FoveatedRenderingDesc>,
         mut present_consumer: Consumer<PresentData>,
-        wait_for_present_mutex: Arc<Mutex<()>>,
+        sync_handle_mutex: Arc<Mutex<()>>,
         slice_producers: Vec<Producer<FrameSlice>>,
     ) -> StrResult<()> {
         let composition_texture = Arc::new(trace_err!(Texture::new(
@@ -141,7 +150,7 @@ impl Compositor {
         //         }).collect();
         let mut render = move || -> UnitResult {
             {
-                let _guard = wait_for_present_mutex.lock();
+                let _guard = sync_handle_mutex.lock();
                 let mut layers = vec![];
                 present_consumer
                     .consume(TIMEOUT, |present_data| {
