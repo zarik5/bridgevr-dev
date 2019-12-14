@@ -198,6 +198,14 @@ fn begin_server_loop(
                     session_desc_loader.lock().get_mut(),
                     present_producer,
                     sync_handle_mutex,
+                    {
+                        let connection_manager = connection_manager.clone();
+                        move |haptic_data| {
+                            connection_manager
+                                .lock()
+                                .send_message_udp(&ServerMessage::Haptic(haptic_data));
+                        }
+                    },
                 );
 
             let statistics_interval = Duration::from_secs(1);

@@ -289,7 +289,7 @@ pub struct OpenvrProp {
 pub struct OpenvrDesc {
     pub timeout_seconds: u64,
     pub block_standby: bool,
-    pub input_mapping: Vec<(String, InputType, Vec<String>)>,
+    pub input_mapping: [Vec<(String, InputType, Vec<String>)>; 2],
     pub compositor_type: CompositorType,
     pub preferred_render_eye_resolution: Option<(u32, u32)>,
     pub hmd_custom_properties: Vec<OpenvrProp>,
@@ -436,14 +436,15 @@ pub struct ServerHandshakePacket {
 
 #[derive(Serialize, Deserialize)]
 pub struct HapticData {
-    pub amplitude: f32,
+    pub hand: u8,
     pub duration_seconds: f32,
     pub frequency: f32,
+    pub amplitude: f32,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum ServerMessage {
-    Haptic([HapticData; 2]),
+    Haptic(HapticData),
     Shutdown,
 }
 

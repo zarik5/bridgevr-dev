@@ -70,6 +70,8 @@ const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [Bounds; 2] = [
     },
 ];
 
+const HAPTIC_PATH: &str = "/output/haptic";
+
 fn pose_from_openvr_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
     use nalgebra::{Matrix3, UnitQuaternion};
 
@@ -95,7 +97,7 @@ struct OpenvrSettings {
     frame_interval: Duration,
     hmd_custom_properties: Vec<OpenvrProp>,
     controllers_custom_properties: [Vec<OpenvrProp>; 2],
-    input_mapping: Vec<(String, InputType, Vec<String>)>,
+    input_mapping: [Vec<(String, InputType, Vec<String>)>; 2],
 }
 
 fn create_openvr_settings(
@@ -152,7 +154,7 @@ fn create_openvr_settings(
     let input_mapping = if let Some(settings) = settings {
         settings.openvr.input_mapping.clone()
     } else {
-        vec![]
+        [vec![], vec![]]
     };
 
     OpenvrSettings {
@@ -181,7 +183,6 @@ struct HmdContext {
     compositor: Arc<Mutex<Compositor>>,
     present_producer: Mutex<Option<Producer<PresentData>>>,
     sync_handle_mutex: Mutex<Option<Arc<Mutex<()>>>>,
-    controller_input_to_component_map: Mutex<Option<HashMap<String, vr::VRInputComponentHandle_t>>>,
     pose: Mutex<vr::DriverPose_t>,
     latest_vsync: Mutex<(Instant, u64)>,
     swap_texture_sets_desc: Mutex<Vec<(usize, [u64; 3], u32)>>,
@@ -459,8 +460,54 @@ fn create_hmd_callbacks(
 
             set_custom_props(container, &context.settings.lock().hmd_custom_properties);
 
-            let mut component_map = HashMap::new();
-            for (path, input_type, controller_paths) in &context.settings.lock().input_mapping {
+            vr::VRInitError_None
+        },
+        deactivate: |context| {
+            *context.id.lock() = None;
+
+            context
+                .shutdown_signal_sender
+                .lock()
+                .send(ShutdownSignal::BackendShutdown)
+                .map_err(|e| debug!("{}", e))
+                .ok();
+        },
+        enter_standby: |_| (),
+        debug_request: |_, request| format!("debug request: {}", request),
+        get_pose: |context| *context.pose.lock(),
+    }
+}
+
+struct ControllerContext {
+    index: usize, // 0: left, 1: right
+    id: Mutex<Option<u32>>,
+    settings: Arc<Mutex<OpenvrSettings>>,
+    pose: Mutex<vr::DriverPose_t>,
+    controller_input_to_component_map: Mutex<HashMap<String, vr::VRInputComponentHandle_t>>,
+    haptic_component: Mutex<vr::VRInputComponentHandle_t>,
+}
+
+fn create_controller_callbacks(
+    controller_context: Arc<ControllerContext>,
+) -> vr::TrackedDeviceServerDriverCallbacks<ControllerContext> {
+    vr::TrackedDeviceServerDriverCallbacks {
+        context: controller_context,
+        activate: |context, object_id| {
+            *context.id.lock() = Some(object_id);
+            let container =
+                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
+
+            //todo: set default props
+
+            set_custom_props(
+                container,
+                &context.settings.lock().controllers_custom_properties[context.index],
+            );
+
+            let mut component_map = context.controller_input_to_component_map.lock();
+            for (path, input_type, controller_paths) in
+                &context.settings.lock().input_mapping[context.index]
+            {
                 let maybe_component = unsafe {
                     match input_type {
                         InputType::Boolean => vr::driver_input_create_boolean(container, &path),
@@ -485,51 +532,17 @@ fn create_hmd_callbacks(
                     }
                 }
             }
-            *context.controller_input_to_component_map.lock() = Some(component_map);
+
+            let maybe_haptic_component =
+                unsafe { vr::driver_input_create_haptic(container, HAPTIC_PATH) }
+                    .map_err(|e| warn!("{}: {}", HAPTIC_PATH, e));
+            if let Ok(component) = maybe_haptic_component {
+                *context.haptic_component.lock() = component;
+            }
 
             vr::VRInitError_None
         },
-        deactivate: |context| {
-            context
-                .shutdown_signal_sender
-                .lock()
-                .send(ShutdownSignal::BackendShutdown)
-                .map_err(|e| debug!("{}", e))
-                .ok();
-        },
-        enter_standby: |_| (),
-        debug_request: |_, request| format!("debug request: {}", request),
-        get_pose: |context| *context.pose.lock(),
-    }
-}
-
-struct ControllerContext {
-    index: usize, // 0: left, 1: right
-    id: Mutex<Option<u32>>,
-    settings: Arc<Mutex<OpenvrSettings>>,
-    pose: Mutex<vr::DriverPose_t>,
-}
-
-fn create_controller_callbacks(
-    controller_context: Arc<ControllerContext>,
-) -> vr::TrackedDeviceServerDriverCallbacks<ControllerContext> {
-    vr::TrackedDeviceServerDriverCallbacks {
-        context: controller_context,
-        activate: |context, object_id| {
-            *context.id.lock() = Some(object_id);
-            let container =
-                unsafe { vr::properties_tracked_device_to_property_container(object_id) };
-
-            //todo: set default props
-
-            set_custom_props(
-                container,
-                &context.settings.lock().controllers_custom_properties[context.index],
-            );
-
-            vr::VRInitError_None
-        },
-        deactivate: |_| (),
+        deactivate: |context| *context.id.lock() = None,
         enter_standby: |_| (),
         debug_request: |_, request| format!("debug request: {}", request),
         get_pose: |context| *context.pose.lock(),
@@ -584,6 +597,7 @@ pub struct OpenvrBackend {
     server: Arc<vr::ServerTrackedDeviceProvider<ServerContext>>,
     hmd_context: Arc<HmdContext>,
     controller_contexts: Vec<Arc<ControllerContext>>,
+    haptic_callback: Arc<Mutex<Option<Box<dyn FnMut(HapticData) + Send>>>>,
 }
 
 impl OpenvrBackend {
@@ -602,7 +616,6 @@ impl OpenvrBackend {
             compositor,
             present_producer: Mutex::new(None),
             sync_handle_mutex: Mutex::new(None),
-            controller_input_to_component_map: Mutex::new(None),
             pose: Mutex::new(DEFAULT_DRIVER_POSE),
             latest_vsync: Mutex::new((Instant::now(), 0)),
             swap_texture_sets_desc: Mutex::new(vec![]),
@@ -657,6 +670,8 @@ impl OpenvrBackend {
                     id: Mutex::new(None),
                     settings: openvr_settings.clone(),
                     pose: Mutex::new(DEFAULT_DRIVER_POSE),
+                    controller_input_to_component_map: Mutex::new(HashMap::new()),
+                    haptic_component: Mutex::new(vr::k_ulInvalidInputComponentHandle),
                 })
             })
             .collect();
@@ -685,6 +700,7 @@ impl OpenvrBackend {
             server,
             hmd_context,
             controller_contexts,
+            haptic_callback: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -694,6 +710,7 @@ impl OpenvrBackend {
         session_desc: &SessionDesc,
         present_producer: Producer<PresentData>,
         sync_handle_mutex: Arc<Mutex<()>>,
+        haptic_callback: impl FnMut(HapticData) + Send + 'static,
     ) {
         // the same openvr settings instance is shared between hmd, controllers and server.
         let new_settings = create_openvr_settings(Some(settings), session_desc);
@@ -711,6 +728,7 @@ impl OpenvrBackend {
             *self.hmd_context.settings.lock() = new_settings;
             *self.hmd_context.present_producer.lock() = Some(present_producer);
             *self.hmd_context.sync_handle_mutex.lock() = Some(sync_handle_mutex);
+            *self.haptic_callback.lock() = Some(Box::new(haptic_callback));
 
             // todo: notify settings changes to openvr
         }
@@ -719,6 +737,7 @@ impl OpenvrBackend {
     pub fn deinitialize_for_client(&mut self) {
         *self.hmd_context.present_producer.lock() = None;
         *self.hmd_context.sync_handle_mutex.lock() = None;
+        *self.haptic_callback.lock() = None;
     }
 
     fn update_pose(
@@ -766,19 +785,40 @@ impl OpenvrBackend {
             );
         }
 
-        let maybe_component_map = self.hmd_context.controller_input_to_component_map.lock();
-        if let Some(components) = &*maybe_component_map {
+        for ctx in &self.controller_contexts {
+            let component_map = ctx.controller_input_to_component_map.lock();
             for (path, value) in input_device_data_to_str_value(&client_update.input_data) {
-                unsafe {
-                    match value {
-                        InputValue::Boolean(value) => {
-                            vr::driver_input_update_boolean(components[path], value, 0_f64);
+                if let Some(component) = component_map.get(path) {
+                    unsafe {
+                        match value {
+                            InputValue::Boolean(value) => {
+                                vr::driver_input_update_boolean(*component, value, 0_f64);
+                            }
+                            InputValue::NormalizedOneSided(value)
+                            | InputValue::NormalizedTwoSided(value) => {
+                                vr::driver_input_update_scalar(*component, value, 0_f64);
+                            }
+                            _ => unimplemented!(),
                         }
-                        InputValue::NormalizedOneSided(value)
-                        | InputValue::NormalizedTwoSided(value) => {
-                            vr::driver_input_update_scalar(components[path], value, 0_f64);
+                    }
+                }
+            }
+        }
+
+        // todo: do this elsewhere?
+        while let Some(event) = unsafe { vr::server_driver_host_poll_next_event() } {
+            if event.eventType == vr::VREvent_Input_HapticVibration as u32 {
+                if let Some(callback) = &mut *self.haptic_callback.lock() {
+                    for (i, ctx) in self.controller_contexts.iter().enumerate() {
+                        let haptic = unsafe { event.data.hapticVibration };
+                        if haptic.componentHandle == *ctx.haptic_component.lock() {
+                            callback(HapticData {
+                                hand: i as u8,
+                                amplitude: haptic.fAmplitude,
+                                duration_seconds: haptic.fDurationSeconds,
+                                frequency: haptic.fFrequency,
+                            });
                         }
-                        _ => unimplemented!(),
                     }
                 }
             }

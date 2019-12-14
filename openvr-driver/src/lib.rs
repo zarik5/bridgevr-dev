@@ -836,9 +836,17 @@ forward_fns! {
         event_time_offset: f64
     ),
     vrServerDriverHostIsExiting => fn server_driver_host_is_exiting() -> bool,
-    vrServerDriverHostPollNextEvent => fn server_driver_host_poll_next_event(
-        event: &mut VREvent_t, size_bytes: u32
-    ) -> bool,
+    [custom] unsafe fn server_driver_host_poll_next_event() -> Option<VREvent_t> {
+        let event_size = size_of::<VREvent_t>() as u32;
+        let mut event = <_>::default();
+        let polled =
+            private::vrServerDriverHostPollNextEvent(&mut event, event_size);
+        if polled {
+            Some(event)
+        } else {
+            None
+        }
+    },
     vrServerDriverHostGetRawTrackedDevicePoses => fn server_driver_host_get_raw_tracked_device_poses(
         predicted_seconds_from_now: f32,
         tracked_device_pose_array: *mut TrackedDevicePose_t,
