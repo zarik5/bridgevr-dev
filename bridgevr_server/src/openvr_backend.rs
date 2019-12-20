@@ -1,5 +1,5 @@
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{data::*, input_mapping::*, ring_channel::*, *};
+use bridgevr_common::{data::*, input_mapping::*, rendering::*, ring_channel::*};
 use log::*;
 use openvr_driver as vr;
 use parking_lot::Mutex;
@@ -53,16 +53,16 @@ const DEFAULT_DRIVER_POSE: vr::DriverPose_t = vr::DriverPose_t {
 };
 
 // On VirtualDislay interface the same texture is used for left and right eye.
-const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [Bounds; 2] = [
+const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [TextureBounds; 2] = [
     // left
-    Bounds {
+    TextureBounds {
         u_min: 0_f32,
         v_min: 0_f32,
         u_max: 0.5_f32,
         v_max: 1_f32,
     },
     //right
-    Bounds {
+    TextureBounds {
         u_min: 0.5_f32,
         v_min: 0_f32,
         u_max: 1_f32,
@@ -180,7 +180,7 @@ fn should_restart(old_settings: &OpenvrSettings, new_settings: &OpenvrSettings) 
 struct HmdContext {
     id: Mutex<Option<u32>>,
     settings: Arc<Mutex<OpenvrSettings>>,
-    compositor: Arc<Mutex<Compositor>>,
+    graphics: Arc<Mutex<Graphics>>,
     present_producer: Mutex<Option<Producer<PresentData>>>,
     sync_handle_mutex: Mutex<Option<Arc<Mutex<()>>>>,
     pose: Mutex<vr::DriverPose_t>,
@@ -194,7 +194,7 @@ fn create_display_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::DisplayComponentCallbacks<HmdContext> {
     vr::DisplayComponentCallbacks {
-        context: hmd_context.clone(),
+        context: hmd_context,
         get_window_bounds: |context, x, y, width, height| {
             let settings = context.settings.lock();
             *x = 0;
@@ -304,13 +304,19 @@ fn create_driver_direct_mode_callbacks(
     vr::DriverDirectModeComponentCallbacks {
         context: hmd_context,
         create_swap_texture_set: |context, pid, swap_texture_set_desc, shared_texture_handles| {
-            let maybe_swap_texture_set = context.compositor.lock().create_swap_texture_set(
-                swap_texture_set_desc.nWidth,
-                swap_texture_set_desc.nHeight,
-                swap_texture_set_desc.nFormat,
-                swap_texture_set_desc.nSampleCount as _,
-            );
-            if let Ok((id, handles)) = display_err!(maybe_swap_texture_set) {
+            let format = format_from_native(swap_texture_set_desc.nFormat);
+            let maybe_swap_texture_set = context
+                .graphics
+                .lock()
+                .create_swap_texture_set(
+                    swap_texture_set_desc.nWidth,
+                    swap_texture_set_desc.nHeight,
+                    format,
+                    swap_texture_set_desc.nSampleCount as _,
+                )
+                .map_err(|e| error!("{}", e));
+
+            if let Ok((id, handles)) = maybe_swap_texture_set {
                 context
                     .swap_texture_sets_desc
                     .lock()
@@ -326,10 +332,10 @@ fn create_driver_direct_mode_callbacks(
             if let Some(idx) = maybe_set_desc_idx {
                 let (id, _, _) = swap_texture_sets_desc.remove(idx);
                 context
-                    .compositor
+                    .graphics
                     .lock()
                     .destroy_swap_texture_set(id)
-                    .map_err(|e| warn!("{}", e))
+                    .map_err(|e| debug!("{}", e))
                     .ok();
             }
         },
@@ -344,10 +350,10 @@ fn create_driver_direct_mode_callbacks(
             for idx in set_desc_idxs {
                 let (id, _, _) = swap_texture_sets_desc.remove(idx);
                 context
-                    .compositor
+                    .graphics
                     .lock()
                     .destroy_swap_texture_set(id)
-                    .map_err(|e| warn!("{}", e))
+                    .map_err(|e| debug!("{}", e))
                     .ok();
             }
         },
@@ -363,7 +369,7 @@ fn create_driver_direct_mode_callbacks(
                 .iter()
                 .map(|eye_layer| {
                     let b = eye_layer.bounds;
-                    let bounds = Bounds {
+                    let bounds = TextureBounds {
                         u_min: b.uMin,
                         v_min: b.vMin,
                         u_max: b.uMax,
@@ -436,7 +442,7 @@ fn set_custom_props(container: vr::PropertyContainerHandle_t, props: &[OpenvrPro
                     prop.code as _,
                     &vr::HmdVector3_t { v: *value },
                 ),
-                OpenvrPropValue::Matrix34(_) => unimplemented!(),
+                OpenvrPropValue::Matrix34(_) => todo!(),
             }
         };
 
@@ -450,7 +456,7 @@ fn create_hmd_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::TrackedDeviceServerDriverCallbacks<HmdContext> {
     vr::TrackedDeviceServerDriverCallbacks {
-        context: hmd_context.clone(),
+        context: hmd_context,
         activate: |context, object_id| {
             *context.id.lock() = Some(object_id);
             let container =
@@ -523,10 +529,12 @@ fn create_controller_callbacks(
                             vr::VRScalarType_Absolute,
                             vr::VRScalarUnits_NormalizedTwoSided,
                         ),
-                        _ => unimplemented!(),
+                        _ => todo!(),
                     }
+                    .map_err(|e| warn!("Create {}: {}", path, e))
                 };
-                if let Ok(component) = maybe_component.map_err(|e| warn!("{}: {}", path, e)) {
+
+                if let Ok(component) = maybe_component {
                     for controller_path in controller_paths {
                         component_map.insert(controller_path.to_owned(), component);
                     }
@@ -535,7 +543,7 @@ fn create_controller_callbacks(
 
             let maybe_haptic_component =
                 unsafe { vr::driver_input_create_haptic(container, HAPTIC_PATH) }
-                    .map_err(|e| warn!("{}: {}", HAPTIC_PATH, e));
+                    .map_err(|e| warn!("Create {}: {}", HAPTIC_PATH, e));
             if let Ok(component) = maybe_haptic_component {
                 *context.haptic_component.lock() = component;
             }
@@ -553,7 +561,7 @@ pub struct ServerContext {
     settings: Arc<Mutex<OpenvrSettings>>,
     shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
     hmd: vr::TrackedDeviceServerDriver<HmdContext>,
-    _controllers: Vec<vr::TrackedDeviceServerDriver<ControllerContext>>,
+    controllers: Vec<vr::TrackedDeviceServerDriver<ControllerContext>>,
 }
 
 fn create_server_callbacks(
@@ -562,17 +570,23 @@ fn create_server_callbacks(
     vr::ServerTrackedDeviceProviderCallbacks {
         context: server_context,
         init: |context, driver_context| {
-            unsafe { vr::init_server_driver_context(driver_context) };
-
-            let mut device_id_iter = 0..;
-
             unsafe {
+                vr::init_server_driver_context(driver_context);
+
                 vr::server_driver_host_tracked_device_added(
-                    &(device_id_iter.next().unwrap()).to_string(),
+                    "0", // HMD device must always have ID = "0"
                     vr::TrackedDeviceClass_HMD,
                     &context.hmd,
-                )
-            };
+                );
+
+                for (idx, controller) in context.controllers.iter().enumerate() {
+                    vr::server_driver_host_tracked_device_added(
+                        &(idx + 1).to_string(),
+                        vr::TrackedDeviceClass_Controller,
+                        &controller,
+                    );
+                }
+            }
 
             vr::VRInitError_None
         },
@@ -593,18 +607,20 @@ fn create_server_callbacks(
     }
 }
 
+type HapticCallback = Box<dyn FnMut(HapticData) + Send>;
+
 pub struct OpenvrBackend {
     server: Arc<vr::ServerTrackedDeviceProvider<ServerContext>>,
     hmd_context: Arc<HmdContext>,
     controller_contexts: Vec<Arc<ControllerContext>>,
-    haptic_callback: Arc<Mutex<Option<Box<dyn FnMut(HapticData) + Send>>>>,
+    haptic_callback: Arc<Mutex<Option<HapticCallback>>>,
 }
 
 impl OpenvrBackend {
     pub fn new(
         settings: Option<&Settings>,
         session_desc: &SessionDesc,
-        compositor: Arc<Mutex<Compositor>>,
+        graphics: Arc<Mutex<Graphics>>,
         shutdown_signal_sender: Sender<ShutdownSignal>,
     ) -> Self {
         let openvr_settings = Arc::new(Mutex::new(create_openvr_settings(settings, &session_desc)));
@@ -613,7 +629,7 @@ impl OpenvrBackend {
         let hmd_context = Arc::new(HmdContext {
             id: Mutex::new(None),
             settings: openvr_settings.clone(),
-            compositor,
+            graphics,
             present_producer: Mutex::new(None),
             sync_handle_mutex: Mutex::new(None),
             pose: Mutex::new(DEFAULT_DRIVER_POSE),
@@ -689,7 +705,7 @@ impl OpenvrBackend {
             settings: openvr_settings,
             shutdown_signal_sender,
             hmd,
-            _controllers: controllers,
+            controllers,
         });
 
         let server_callbacks = create_server_callbacks(server_context);
@@ -798,7 +814,7 @@ impl OpenvrBackend {
                             | InputValue::NormalizedTwoSided(value) => {
                                 vr::driver_input_update_scalar(*component, value, 0_f64);
                             }
-                            _ => unimplemented!(),
+                            _ => todo!(),
                         }
                     }
                 }

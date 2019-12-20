@@ -23,7 +23,7 @@ pub struct Gstreamer {
 impl Drop for Gstreamer {
     fn drop(&mut self) {
         if let Err(err) = self.pipeline.set_state(gst::State::Null) {
-            warn!("GStreamer shutdown: {}", err);
+            debug!("GStreamer shutdown: {}", err);
         }
     }
 }

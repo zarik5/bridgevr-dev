@@ -1,21 +1,24 @@
 pub type StrResult<T> = std::result::Result<T, String>;
 
-fn default_display_error_fn(_: &str) {}
-pub static mut _DISPLAY_ERROR_CB: fn(&str) = default_display_error_fn;
+fn default_show_error_fn(_: &str) {}
+pub static mut _SHOW_ERROR_CB: fn(&str) = default_show_error_fn;
 
 #[macro_export]
-macro_rules! display_err_str {
+macro_rules! show_err_str {
     ($fmt:expr $(, $args:expr)*) => {{
         log::error!($fmt $(, $args)*);
-        unsafe { $crate::logging::_DISPLAY_ERROR_CB(&format!($fmt $(, $args)*)) };
+        unsafe { $crate::logging::_SHOW_ERROR_CB(&format!($fmt $(, $args)*)) };
     }};
 }
 
-pub fn set_display_error_fn(cb: fn(&str)) {
-    unsafe { _DISPLAY_ERROR_CB = cb };
+pub fn set_show_error_fn(cb: fn(&str)) {
+    unsafe { _SHOW_ERROR_CB = cb };
     std::panic::set_hook(Box::new(|panic_info| {
-        let message = panic_info.payload().downcast_ref::<&str>().unwrap_or(&"Unavailable");
-        display_err_str!(
+        let message = panic_info
+            .payload()
+            .downcast_ref::<&str>()
+            .unwrap_or(&"Unavailable");
+        show_err_str!(
             "BridgeVR panicked. This is a bug.\nMessage: {:?}\nBacktrace:\n{:?}",
             message,
             backtrace::Backtrace::new()
@@ -49,11 +52,11 @@ macro_rules! trace_none {
 }
 
 #[macro_export]
-macro_rules! display_err {
+macro_rules! show_err {
     ($res:expr) => {
         $res.map_err(|e| {
             log::error!("{:?}", e);
-            unsafe { $crate::logging::_DISPLAY_ERROR_CB(&format!("{:?}", e)) };
+            unsafe { $crate::logging::_SHOW_ERROR_CB(&format!("{:?}", e)) };
         })
     };
 }

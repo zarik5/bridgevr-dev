@@ -33,7 +33,7 @@ path = '../openvr-driver'
 [target.'cfg(target_os = "linux")'.dependencies]
 # bridgevr_common = { path = '../bridgevr_common', features=['vulkan'], default-features=false }
 nvidia-video-codec-sdk-sys = { path = '../nvidia-video-codec-sdk-sys', features = ['encoder'], optional = true }
-gtk = '0.7.0'
+gtk = '0.8.0'
 
 [target."cfg(windows)".dependencies]
 # bridgevr_common = { path = '../bridgevr_common', features=['dx11'], default-features=false }

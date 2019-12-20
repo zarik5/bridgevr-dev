@@ -5,19 +5,18 @@ fn show_error_message_box(_: &str, message_with_intro: &str) {
     use gtk::*;
 
     // init() must be called on the same thread as MessageDialog::new()
-    if gtk::init().is_err() {
+    if gtk::init().is_ok() {
+        MessageDialog::new(
+            None::<&Window>,
+            DialogFlags::empty(),
+            MessageType::Error,
+            ButtonsType::Close,
+            &message_with_intro,
+        )
+        .run();
+    } else {
         error!("Failed to initialize GTK. Exit");
-        panic!();
     }
-
-    MessageDialog::new(
-        None::<&Window>,
-        DialogFlags::empty(),
-        MessageType::Error,
-        ButtonsType::Close,
-        &message_with_intro,
-    )
-    .run();
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -64,5 +63,5 @@ pub fn init_logging() {
         show_error_message_box("BridgeVR crashed", &message);
     }
 
-    bridgevr_common::logging::set_display_error_fn(log_error_fn);
+    bridgevr_common::logging::set_show_error_fn(log_error_fn);
 }

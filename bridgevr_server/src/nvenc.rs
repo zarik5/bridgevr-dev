@@ -298,7 +298,7 @@
 //         );
 //         // (NV_ENC_ERR_NEED_MORE_INPUT should never happen)
 
-//         std::unimplemented!();
+//         todo!();
 //     }
 // }
 

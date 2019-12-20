@@ -47,10 +47,14 @@ impl<K, V> TimeoutMap<K, V> {
             .map(|(i, _)| i)
             .collect();
 
-        idx_to_be_removed
-            .iter()
-            .map(|i| self.buffer.remove(*i).unwrap().value)
-            .collect()
+        let mut expired = vec![];
+        for idx in idx_to_be_removed {
+            if let Some(entry) = self.buffer.remove(idx) {
+                expired.push(entry.value)
+            }
+        }
+
+        expired
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
@@ -73,13 +77,13 @@ impl<K, V> TimeoutMap<K, V> {
 impl<K: PartialEq, V> TimeoutMap<K, V> {
     pub fn remove(&mut self, key: &K) -> Option<(K, V)> {
         // front to back iterator
-        let entry_ref = self
+        let entry = self
             .buffer
             .iter()
             .enumerate()
             .find(|(_, entry)| entry.key == *key);
 
-        if let Some((idx, _)) = entry_ref {
+        if let Some((idx, _)) = entry {
             self.buffer
                 .remove(idx)
                 .map(|entry| (entry.key, entry.value))

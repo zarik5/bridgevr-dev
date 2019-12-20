@@ -1,8 +1,7 @@
 use crate::compositor::*;
 use bridgevr_common::{
-    rendering::*,
-    ring_channel::*,
     data::VideoEncoderDesc,
+    ring_channel::*,
     sockets::*,
     thread_loop::{self, *},
     *,
@@ -25,7 +24,9 @@ impl VideoEncoder {
         frame_consumer: Consumer<FrameSlice>,
         packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {
-        unimplemented!()
+        let thread_loop = thread_loop::spawn(|| todo!());
+
+        Ok(Self { thread_loop })
     }
 
     pub fn request_stop(&mut self) {

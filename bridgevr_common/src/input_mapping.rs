@@ -276,6 +276,6 @@ pub fn input_device_data_to_str_value(
                 InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::HOME)),
             ),
         ],
-        _ => unimplemented!(),
+        _ => todo!(),
     }
 }

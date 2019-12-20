@@ -1,10 +1,9 @@
 use crate::{ring_channel::*, sockets::*, *};
-use byteorder::*;
 use cpal::{
     traits::{DeviceTrait, EventLoopTrait, HostTrait},
     *,
 };
-use log::{error, info};
+use log::*;
 use safe_transmute::*;
 use std::{cmp::min, collections::VecDeque, sync::*, thread::*, time::Duration, *};
 
@@ -90,8 +89,9 @@ impl AudioSession {
         format.data_type = SampleFormat::F32;
 
         let stream = trace_err!(match mode {
-            AudioMode::Input | AudioMode::Loopback =>
-                event_loop.build_input_stream(&device, &format),
+            AudioMode::Input | AudioMode::Loopback => {
+                event_loop.build_input_stream(&device, &format)
+            }
             AudioMode::Output => event_loop.build_output_stream(&device, &format),
         })?;
         trace_err!(event_loop.play_stream(stream.clone()))?;
@@ -103,7 +103,7 @@ impl AudioSession {
                     Ok(io_data) => {
                         buffer_callback(io_data);
                     }
-                    Err(e) => error!("{}", e),
+                    Err(e) => warn!("{}", e),
                 });
             }
         }));
@@ -147,7 +147,7 @@ impl AudioRecorder {
         for _ in 0..3 {
             buffer_producer.add(SenderData {
                 packet: vec![0; MAX_PACKET_SIZE_BYTES],
-                data_offset: get_data_offset(&()),
+                data_offset: get_data_offset(&())?,
                 data_size: 0,
             });
         }
@@ -160,7 +160,9 @@ impl AudioRecorder {
                     buffer: UnknownTypeInputBuffer::F32(samples),
                 } => {
                     let res = buffer_producer.fill(TIMEOUT, |data| {
-                        serialize_indexed_header_into(&mut data.packet, buffer_index, &()).unwrap();
+                        serialize_indexed_header_into(&mut data.packet, buffer_index, &())
+                            .map_err(|e| error!("{}", e))
+                            .ok();
 
                         let samples_bytes = guarded_transmute_to_bytes_pod_many(&samples[..]);
                         data.data_size = samples_bytes.len();
@@ -175,7 +177,7 @@ impl AudioRecorder {
                         buffer_index += 1;
                     }
                 }
-                _ => error!("[Audio recorder] Invalid format"),
+                _ => warn!("[Audio recorder] Invalid format"),
             }
         }))?;
 
@@ -193,9 +195,8 @@ pub struct AudioPlayer {
 
 impl AudioPlayer {
     fn copy_audio_buffer(input: &[u8], byte_count: usize, output: &mut VecDeque<f32>) {
-        // todo: use from_le_bytes() when is stabilized #60446
         for chunk in input.chunks_exact(4).take(byte_count / 4) {
-            output.push_back(LittleEndian::read_f32(chunk));
+            output.push_back(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
         }
     }
 
@@ -223,18 +224,16 @@ impl AudioPlayer {
                             sample_idx += samples_to_copy;
 
                             if sample_idx < samples.len() {
-                                let res = buffer_consumer.consume(
-                                    &buffer_idx,
-                                    Duration::from_secs(0),
-                                    |data| {
+                                let res = buffer_consumer
+                                    .consume(&buffer_idx, Duration::from_secs(0), |data| {
                                         Self::copy_audio_buffer(
                                             &data.packet[..],
                                             data.packet_size,
                                             &mut sample_buffer,
                                         );
                                         Ok(())
-                                    },
-                                );
+                                    })
+                                    .map_err(|e| debug!("{:?}", e));
                                 if res.is_ok() {
                                     buffer_idx += 1;
                                 } else {
@@ -255,7 +254,7 @@ impl AudioPlayer {
                             }
                         }
                     }
-                    _ => error!("[Audio player] Invalid Format"),
+                    _ => warn!("[Audio player] Invalid Format"),
                 }
             }
         ))?;

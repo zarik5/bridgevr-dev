@@ -6,7 +6,7 @@ mod statistics;
 mod video_encoder;
 
 use bridgevr_common::{audio::*, constants::*, data::*, ring_channel::*, sockets::*, *};
-use compositor::Compositor;
+use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
 use openvr_backend::*;
@@ -32,12 +32,11 @@ fn get_settings() -> StrResult<Settings> {
     load_settings(env!("SETTINGS_PATH"))
 }
 
-type ShutdownSignalChannel = (Sender<ShutdownSignal>, Receiver<ShutdownSignal>);
-
 fn begin_server_loop(
-    compositor: Arc<Mutex<Compositor>>,
+    graphics: Arc<Mutex<Graphics>>,
     openvr_backend: Arc<Mutex<OpenvrBackend>>,
-    (shutdown_signal_sender, shutdown_signal_receiver): ShutdownSignalChannel,
+    shutdown_signal_sender: Sender<ShutdownSignal>,
+    shutdown_signal_receiver: Receiver<ShutdownSignal>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 ) -> StrResult<()> {
     let timeout = Duration::from_secs(
@@ -48,9 +47,7 @@ fn begin_server_loop(
     let mut deadline = Instant::now() + timeout;
 
     let try_connect = {
-        let compositor = compositor.clone();
         let openvr_backend = openvr_backend.clone();
-        let shutdown_signal_sender = shutdown_signal_sender.clone();
 
         // if any error is encountered, display it immediately to avoid waiting for every object to
         // drop
@@ -59,16 +56,16 @@ fn begin_server_loop(
                 settings
             } else {
                 thread::sleep(Duration::from_secs(1));
-                display_err!(get_settings())?
+                show_err!(get_settings())?
             };
             let receiver_data_port = settings.connection.starting_data_port;
             let mut next_sender_data_port = settings.connection.starting_data_port;
 
             let (client_handshake_packet, client_candidate_desc) =
-                display_err!(search_client(&settings.connection.client_ip, TIMEOUT))?;
+                show_err!(search_client(&settings.connection.client_ip, TIMEOUT))?;
 
             if client_handshake_packet.version < BVR_MIN_VERSION_CLIENT {
-                display_err_str!(
+                show_err_str!(
                     "Espected client of version {} or greater, found {}.",
                     BVR_MIN_VERSION_CLIENT,
                     client_handshake_packet.version
@@ -103,13 +100,12 @@ fn begin_server_loop(
 
             let client_statistics = Arc::new(Mutex::new(ClientStatistics::default()));
 
-            let connection_manager = Arc::new(Mutex::new(display_err!(
+            let connection_manager = Arc::new(Mutex::new(show_err!(
                 ConnectionManager::connect_to_client(
                     client_candidate_desc,
                     server_handshake_packet,
                     {
                         let shutdown_signal_sender = shutdown_signal_sender.clone();
-                        let client_statistics = client_statistics.clone();
                         let openvr_backend = openvr_backend.clone();
                         move |message| match message {
                             ClientMessage::Update(input) => {
@@ -140,13 +136,13 @@ fn begin_server_loop(
             for slice_consumer in slice_consumers {
                 let (video_packet_producer, video_packet_consumer) = queue_channel_split();
 
-                video_encoders.push(display_err!(VideoEncoder::new(
+                video_encoders.push(show_err!(VideoEncoder::new(
                     settings.video.encoder.clone(),
                     slice_consumer,
                     video_packet_producer,
                 ))?);
 
-                display_err!(connection_manager
+                show_err!(connection_manager
                     .lock()
                     .begin_send_buffers(next_sender_data_port, video_packet_consumer))?;
                 next_sender_data_port += 1;
@@ -156,8 +152,8 @@ fn begin_server_loop(
                 Switch::Enabled(device_idx) => {
                     let (producer, consumer) = queue_channel_split();
                     let audio_recorder =
-                        display_err!(AudioRecorder::start_recording(device_idx, true, producer))?;
-                    display_err!(connection_manager
+                        show_err!(AudioRecorder::start_recording(device_idx, true, producer))?;
+                    show_err!(connection_manager
                         .lock()
                         .begin_send_buffers(next_sender_data_port, consumer))?;
                     Some(audio_recorder)
@@ -168,10 +164,10 @@ fn begin_server_loop(
             let mut maybe_microphone_player = match &settings.audio.microphone {
                 Switch::Enabled(mic) => {
                     let (producer, consumer) = keyed_channel_split(Duration::from_millis(100));
-                    display_err!(connection_manager
+                    show_err!(connection_manager
                         .lock()
                         .begin_receive_indexed_buffers(receiver_data_port, producer))?;
-                    Some(display_err!(AudioPlayer::start_playback(
+                    Some(show_err!(AudioPlayer::start_playback(
                         Some(mic.server_device_index),
                         consumer,
                     ))?)
@@ -182,10 +178,14 @@ fn begin_server_loop(
             let (present_producer, present_consumer) = queue_channel_split();
             let sync_handle_mutex = Arc::new(Mutex::new(()));
 
-            display_err!(compositor.lock().initialize_for_client(
-                target_eye_width,
-                target_eye_height,
-                settings.video.foveated_rendering.clone().into_option(),
+            let mut compositor = show_err!(Compositor::new(
+                graphics.clone(),
+                CompositorSettings {
+                    target_eye_width,
+                    target_eye_height,
+                    filter_type: settings.video.composition_filtering,
+                    ffr_desc: settings.video.foveated_rendering.clone().into_option(),
+                },
                 present_consumer,
                 sync_handle_mutex.clone(),
                 slice_producers,
@@ -203,7 +203,9 @@ fn begin_server_loop(
                         move |haptic_data| {
                             connection_manager
                                 .lock()
-                                .send_message_udp(&ServerMessage::Haptic(haptic_data));
+                                .send_message_udp(&ServerMessage::Haptic(haptic_data))
+                                .map_err(|e| debug!("{}", e))
+                                .ok();
                         }
                     },
                 );
@@ -224,7 +226,9 @@ fn begin_server_loop(
             if let Ok(ShutdownSignal::BackendShutdown) = res {
                 connection_manager
                     .lock()
-                    .send_message_tcp(&ServerMessage::Shutdown);
+                    .send_message_tcp(&ServerMessage::Shutdown)
+                    .map_err(|e| debug!("{}", e))
+                    .ok();
             }
 
             // Dropping an object that contains a thread loop requires waiting for some actions to
@@ -234,6 +238,11 @@ fn begin_server_loop(
             // after, the time needed for all drops is at worst the maximum of all the timeouts.
 
             connection_manager.lock().request_stop();
+            compositor.request_stop();
+
+            for video_encoder in &mut video_encoders {
+                video_encoder.request_stop();
+            }
 
             if let Some(recorder) = &mut maybe_game_audio_recorder {
                 recorder.request_stop();
@@ -242,8 +251,6 @@ fn begin_server_loop(
             if let Some(player) = &mut maybe_microphone_player {
                 player.request_stop();
             }
-
-            compositor.lock().request_deinitialize_for_client();
 
             res
         }
@@ -263,7 +270,6 @@ fn begin_server_loop(
                 }
             }
             openvr_backend.lock().deinitialize_for_client();
-            compositor.lock().request_deinitialize_for_client();
         }
     });
 
@@ -282,34 +288,34 @@ fn begin_server_loop(
 type Temp<T> = Arc<Mutex<Option<T>>>;
 
 struct EmptySystem {
-    compositor: Arc<Mutex<Compositor>>,
+    graphics: Arc<Mutex<Graphics>>,
     openvr_backend: Arc<Mutex<OpenvrBackend>>,
-    shutdown_signal_channel_tmp: Temp<ShutdownSignalChannel>,
+    shutdown_signal_channel_temp: Temp<(Sender<ShutdownSignal>, Receiver<ShutdownSignal>)>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 }
 
 fn create_empty_system() -> StrResult<EmptySystem> {
     let maybe_settings = get_settings()
-        .map_err(|_| warn!("Cannot read settings. BridgeVR server will be in an invalid state."))
+        .map_err(|_| error!("Cannot read settings. BridgeVR server will be in an invalid state."))
         .ok();
 
     let session_desc_loader = Arc::new(Mutex::new(SessionDescLoader::load(env!("SESSION_PATH"))));
 
-    let compositor = Arc::new(Mutex::new(Compositor::new()?));
+    let graphics = Arc::new(Mutex::new(Graphics::new()?));
 
     let (shutdown_signal_sender, shutdown_signal_receiver) = mpsc::channel();
 
     let openvr_backend = Arc::new(Mutex::new(OpenvrBackend::new(
         maybe_settings.as_ref(),
         &session_desc_loader.lock().get_mut(),
-        compositor.clone(),
+        graphics.clone(),
         shutdown_signal_sender.clone(),
     )));
 
     Ok(EmptySystem {
-        compositor,
+        graphics,
         openvr_backend,
-        shutdown_signal_channel_tmp: Arc::new(Mutex::new(Some((
+        shutdown_signal_channel_temp: Arc::new(Mutex::new(Some((
             shutdown_signal_sender,
             shutdown_signal_receiver,
         )))),
@@ -324,12 +330,15 @@ openvr_server_entry_point!({
         static ref EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
     }
 
-    display_err!(EMPTY_SYSTEM.as_ref()).map(|sys| {
-        let shutdown_signal_channel = sys.shutdown_signal_channel_tmp.lock().take().unwrap();
-        display_err!(begin_server_loop(
-            sys.compositor.clone(),
+    show_err!(EMPTY_SYSTEM.as_ref()).map(|sys| {
+        // this unwrap is safe because `shutdown_signal_channel_temp` has just been set
+        let (shutdown_signal_sender, shutdown_signal_receiver) =
+            sys.shutdown_signal_channel_temp.lock().take().unwrap();
+        show_err!(begin_server_loop(
+            sys.graphics.clone(),
             sys.openvr_backend.clone(),
-            shutdown_signal_channel,
+            shutdown_signal_sender,
+            shutdown_signal_receiver,
             sys.session_desc_loader.clone()
         ))
         .ok();

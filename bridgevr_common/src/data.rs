@@ -31,7 +31,7 @@ pub struct Fov {
     pub bottom: f32,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Copy)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Copy, Default)]
 pub struct Pose {
     pub position: [f32; 3],
     pub orientation: [f32; 4],
@@ -220,6 +220,7 @@ pub enum CompositionFilteringType {
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct FoveatedRenderingDesc {
     strength: f32,
+    shape_ratio: f32,
     vertical_offset: f32,
 }
 

@@ -839,9 +839,7 @@ forward_fns! {
     [custom] unsafe fn server_driver_host_poll_next_event() -> Option<VREvent_t> {
         let event_size = size_of::<VREvent_t>() as u32;
         let mut event = <_>::default();
-        let polled =
-            private::vrServerDriverHostPollNextEvent(&mut event, event_size);
-        if polled {
+        if private::vrServerDriverHostPollNextEvent(&mut event, event_size) {
             Some(event)
         } else {
             None

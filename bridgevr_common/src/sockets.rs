@@ -22,8 +22,9 @@ fn create_udp_socket(peer_ip: IpAddr, port: u16) -> StrResult<UdpSocket> {
     Ok(udp_message_socket)
 }
 
-pub fn get_data_offset<H: Serialize>(header: &H) -> usize {
-    bincode::serialized_size(header).unwrap() as usize + 8 // 8 is index byte size
+pub fn get_data_offset<H: Serialize>(header: &H) -> StrResult<usize> {
+    let size = trace_err!(bincode::serialized_size(header))?;
+    Ok(size as usize + 8) // 8 is index byte size
 }
 
 pub fn serialize_indexed_header_into<H: Serialize>(
@@ -59,11 +60,11 @@ pub fn search_client(
     let mut try_find_client = || -> Result<(ClientHandshakePacket, ClientCandidateDesc), ()> {
         let (size, address) = listener
             .recv_from(&mut packet_buffer)
-            .map_err(|e| warn!("No handshake packet received: {}", e))?;
+            .map_err(|e| debug!("No handshake packet received: {}", e))?;
 
         if let Some(ip) = maybe_target_client_ip {
             if address.ip() != ip {
-                warn!("Found client with wrong IP");
+                info!("Found client with wrong IP");
                 return Err(());
             }
         }
@@ -150,11 +151,11 @@ impl<SM> ConnectionManager<SM> {
 
             let mut try_receive = move || -> UnitResult {
                 let size = udp_message_socket.recv(&mut packet_buffer).map_err(|e| {
-                    warn!("UDP message receive: {}", e);
+                    debug!("UDP message receive: {}", e);
                 })?;
 
                 let message = bincode::deserialize(&packet_buffer[..size])
-                    .map_err(|e| warn!("Received message: {}", e))?;
+                    .map_err(|e| debug!("Received message: {}", e))?;
 
                 (&mut *message_received_callback.lock())(message);
 
@@ -225,7 +226,7 @@ impl<SM> ConnectionManager<SM> {
         let listener = trace_err!(TcpListener::bind(SocketAddr::new(BIND_ADDR, MESSAGE_PORT)))?;
         trace_err!(listener.set_nonblocking(true))?;
 
-        let client_hanshake_packet = bincode::serialize(&handshake_packet).unwrap();
+        let client_hanshake_packet = trace_err!(bincode::serialize(&handshake_packet))?;
 
         let try_handshake = || -> Result<(Self, ServerHandshakePacket), ()> {
             multicaster
@@ -233,7 +234,7 @@ impl<SM> ConnectionManager<SM> {
                     &client_hanshake_packet,
                     SocketAddr::V4(SocketAddrV4::new(MULTICAST_ADDR, MESSAGE_PORT)),
                 )
-                .map_err(|err| warn!("Handshake packet multicast: {}", err))?;
+                .map_err(|err| debug!("Handshake packet multicast: {}", err))?;
 
             let accept_deadline = Instant::now() + HANDSHAKE_TIMEOUT;
             let (control_socket, address) = loop {
@@ -255,7 +256,7 @@ impl<SM> ConnectionManager<SM> {
                 address.ip(),
                 message_received_callback.clone(),
             )
-            .map_err(|_| warn!("Cannot create connection manager"))?;
+            .map_err(|e| warn!("{}", e))?;
 
             Ok((connection_manager, server_handshake_packet))
         };
@@ -285,13 +286,14 @@ impl<SM> ConnectionManager<SM> {
         let socket = socket_data_ref.socket.clone();
         socket_data_ref.sender_thread = Some(thread_loop::spawn(move || {
             buffer_consumer
-                .consume(PACKET_TIMEOUT, |data| -> UnitResult {
-                    // todo: send returns a usize. check that the whole packet is sent
+                .consume(PACKET_TIMEOUT, |data| {
+                    // todo: send() returns a usize. check that the whole packet is sent
                     socket
                         .send(&data.packet[0..(data.data_offset + data.data_size)])
-                        .map(|_| ())
                         .map_err(|e| warn!("UDP send error: {}", e))
+                        .map(|_| ())
                 })
+                .map_err(|e| debug!("{:?}", e))
                 .ok();
         }));
 
@@ -318,12 +320,14 @@ impl<SM> ConnectionManager<SM> {
             buffer_producer
                 .fill(PACKET_TIMEOUT, |data| -> Result<u64, ()> {
                     data.packet_size = socket.recv(&mut data.packet).map_err(|err| {
-                        warn!("UDP buffer receive: {}", err);
+                        debug!("UDP buffer receive: {}", err);
                     })?;
 
                     // extract packet index
                     Ok(u64::from_le_bytes(
-                        (&data.packet as &[u8]).try_into().unwrap(),
+                        (&data.packet as &[u8])
+                            .try_into()
+                            .map_err(|e| error!("{}", e))?,
                     ))
                 })
                 .ok();
@@ -349,26 +353,27 @@ impl<SM> ConnectionManager<SM> {
 }
 
 impl<SM: Serialize> ConnectionManager<SM> {
-    pub fn send_message_udp(&self, packet: &SM) {
+    pub fn send_message_udp(&self, packet: &SM) -> StrResult<()> {
         // reuse same buffer to avoid unnecessary reallocations
         let mut send_message_buffer = self.send_message_buffer.lock();
         send_message_buffer.clear();
 
-        let packet_size = bincode::serialized_size(packet).unwrap();
-        bincode::serialize_into(&mut *send_message_buffer, packet).unwrap();
+        let packet_size = trace_err!(bincode::serialized_size(packet))?;
+        trace_err!(bincode::serialize_into(&mut *send_message_buffer, packet))?;
 
         //todo: send() returns a usize. Check that the whole packet is sent in one go
-        if let Err(err) = self
-            .udp_message_socket
-            .send(&send_message_buffer[..packet_size as _])
-        {
-            warn!("UDP send error: {}", err)
-        }
+        trace_err!(
+            self.udp_message_socket
+                .send(&send_message_buffer[..packet_size as _]),
+            "UDP send error"
+        )
+        .map(|_| ())
     }
 
-    pub fn send_message_tcp(&mut self, packet: &SM) {
-        if let Err(err) = bincode::serialize_into(&*self.tcp_message_socket, packet) {
-            warn!("TCP send error: {}", err)
-        }
+    pub fn send_message_tcp(&mut self, packet: &SM) -> StrResult<()> {
+        trace_err!(
+            bincode::serialize_into(&*self.tcp_message_socket, packet),
+            "TCP send error"
+        )
     }
 }
