@@ -44,123 +44,89 @@ pub struct MotionDesc {
     pub angular_velocity: [f32; 3],
 }
 
-// #[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Preset {
+    HighPerformance,
+    Default,
+    HighQuality,
+}
 
-// pub enum Preset {
-//     HighPerformance,
-//     Default,
-//     HighQuality,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct QP {
+    pub i: u32,
+    pub p: u32,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub struct QP {
-//     pub i: u32,
-//     pub p: u32,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub enum RateControlMode {
+    ConstantQP(Option<QP>),
+    VBR {
+        max_bitrate: Option<u32>,
+        initial_qp: Option<Switch<QP>>,
+        min_qp: Option<Switch<QP>>,
+        max_qp: Option<Switch<QP>>,
+        target_quality: Option<u8>,
+    },
+    CBR,
+    LowDelayCBR,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub enum RateControlMode {
-//     // better quality but it can cause lag spikes (or increase overall latency if latency control is on)
-//     ConstantQP(Option<QP>),
-//     VBR {
-//         max_bitrate: Option<u32>,
-//         initial_qp: Option<Switch<QP>>,
-//         min_qp: Option<Switch<QP>>,
-//         max_qp: Option<Switch<QP>>,
-//         target_quality: Option<u8>,
-//     },
-//     CBR,
-//     // preferred
-//     LowDelayCBR,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AQ {
+    pub enable_spatial: bool,
+    pub enable_temporal: bool,
+    pub strength: u32,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub struct AQ {
-//     pub enable_spatial: bool,
-//     pub enable_temporal: bool,
-//     pub strength: u32,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RateControlParams {
+    pub rate_control_mode: Option<RateControlMode>,
+    pub bitrate_k: Option<u32>,
+    pub vbv_buffer_size: Option<u32>,
+    pub vbv_initial_delay: Option<u32>,
+    pub aq: Option<AQ>,
+    pub zero_latency: Option<bool>,
+    pub enable_non_ref_p: Option<bool>,
+    pub strict_gop_target: Option<bool>,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub struct RateControlParams {
-//     pub rate_control_mode: RateControlMode,
-//     pub bitrate_k: Option<u32>,
-//     pub vbv_buffer_size: Option<u32>,
-//     pub vbv_initial_delay: Option<u32>,
-//     pub aq: Option<AQ>,
-//     pub zero_latency: Option<bool>,
-//     pub enable_non_ref_p: Option<bool>,
-//     pub strict_gop_target: Option<bool>,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IntraRefresh {
+    pub period: u32,
+    pub count: u32,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub struct IntraRefresh {
-//     pub period: u32,
-//     pub count: u32,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum NvSliceMode {
+    MBs { mb_per_slice: u32 },
+    Bytes { max_bytes_per_slice: u32 },
+    MBRows { num_rows: u32 },
+    Slices { num_slices: u32 },
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// #[serde(tag = "type")]
-// pub enum SliceMode {
-//     MBs { mb_per_slice: u32 },
-//     Bytes { max_bytes_per_slice: u32 },
-//     MBRows { num_rows: u32 },
-//     Slices { num_slices: u32 },
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub enum ChromaFormat {
+    YUV420,
+    YUV444,
+}
 
-// #[derive(Serialize, Deserialize, Clone)]
-// pub enum ChromaFormat {
-//     YUV420,
-//     YUV444,
-// }
-
-// #[derive(Serialize, Deserialize, Clone)]
-// pub enum LumaSize {
-//     SizeAuto,
-//     Size8x8,
-//     Size16x16,
-//     Size32x32,
-//     Size64x64,
-// }
-
-// #[derive(Serialize, Deserialize, Clone)]
-// #[serde(tag = "type")]
-// pub enum Codec {
-//     H264 {
-//         preset: Preset,
-//         rc_params: RateControlParams,
-//         hierarchical_p_frames: Option<bool>,
-//         intra_refresh: Option<Switch<IntraRefresh>>,
-//         level: Option<u32>,
-//         disable_deblocking_filter_idc: Option<bool>,
-//         num_temporal_layers: Option<u32>,
-//         adaptive_transform_mode: Option<u32>,
-//         entropy_coding_mode: Option<u32>,
-//         max_num_ref_frames: Option<u32>,
-//         slice_mode: Option<SliceMode>,
-//         chroma_format: Option<ChromaFormat>,
-//         max_temporal_layers: Option<u32>,
-//     },
-//     HEVC {
-//         preset: Preset,
-//         rc_params: RateControlParams,
-//         level: Option<u32>,
-//         tier: Option<u32>,
-//         min_luma_size: LumaSize,
-//         max_luma_size: LumaSize,
-//         disable_deblock_across_slice_boundary: Option<bool>,
-//         intra_refresh: Option<Switch<IntraRefresh>>,
-//         chroma_format: Option<ChromaFormat>,
-//         max_num_ref_frames_in_dpb: Option<u32>,
-//         slice_mode: Option<SliceMode>,
-//         max_temporal_layers_minus_1: Option<u32>,
-//     },
-// }
-
-// #[derive(Serialize, Deserialize, Clone)]
-// pub struct NvidiaEncoder {
-//     pub codec: Codec,
-// }
+#[derive(Serialize, Deserialize, Clone)]
+pub struct NvCodecH264 {
+    pub preset: Preset,
+    pub rc_params: RateControlParams,
+    pub hierarchical_p_frames: Option<bool>,
+    pub intra_refresh: Option<Switch<IntraRefresh>>,
+    pub level: Option<u32>,
+    pub disable_deblocking_filter_idc: Option<bool>,
+    pub num_temporal_layers: Option<u32>,
+    pub adaptive_transform_mode: Option<u32>,
+    pub entropy_coding_mode: Option<u32>,
+    pub max_num_ref_frames: Option<u32>,
+    pub slice_mode: Option<NvSliceMode>,
+    pub chroma_format: Option<ChromaFormat>,
+    pub max_temporal_layers: Option<u32>,
+}
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum FrameSize {
@@ -201,11 +167,14 @@ pub struct ConnectionDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
 pub enum VideoEncoderDesc {
     Gstreamer(String),
+    Nvidia(NvCodecH264)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
 pub enum VideoDecoderDesc {
     Gstreamer(String),
 }
@@ -277,7 +246,7 @@ pub enum InputType {
     Boolean,
     NormalizedOneSided,
     NormalizedTwoSided,
-    Skeletal
+    Skeletal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

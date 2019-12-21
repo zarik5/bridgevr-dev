@@ -1,5 +1,6 @@
 mod compositor;
 mod logging_backend;
+mod nvenc;
 mod openvr_backend;
 mod shutdown_signal;
 mod statistics;

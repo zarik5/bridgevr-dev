@@ -7,7 +7,7 @@ use log::*;
 use safe_transmute::*;
 use std::{cmp::min, collections::VecDeque, sync::*, thread::*, time::Duration, *};
 
-const TRACE_CONTEXT: &str = "Audio IO";
+const TRACE_CONTEXT: &str = "Audio";
 
 const TIMEOUT: Duration = Duration::from_millis(500);
 

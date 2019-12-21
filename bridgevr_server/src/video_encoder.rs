@@ -1,4 +1,4 @@
-use crate::compositor::*;
+use crate::{compositor::*, nvenc::*};
 use bridgevr_common::{
     data::VideoEncoderDesc,
     ring_channel::*,
@@ -24,6 +24,7 @@ impl VideoEncoder {
         frame_consumer: Consumer<FrameSlice>,
         packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {
+        let nv_encoder = NvidiaEncoder::new(todo!(), todo!(), todo!(), todo!(), todo!(), todo!());
         let thread_loop = thread_loop::spawn(|| todo!());
 
         Ok(Self { thread_loop })

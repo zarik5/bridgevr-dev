@@ -29,7 +29,6 @@ fn main() {
         .compile("bindings");
 
     bindgen::builder()
-        // .clang_arg("-xc++")
         .clang_arg("-Isrc/")
         .clang_arg("-Iinclude/")
         .header(bindings_header_path.to_string_lossy())
