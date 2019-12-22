@@ -70,7 +70,7 @@ impl AudioSession {
                 // the bound check prevents panic
                 devices_and_formats.remove(idx)
             } else {
-                trace_err!(Err("Index out of bound"))?
+                return trace_str!("Index out of bound")
             }
         } else {
             match mode {
@@ -96,7 +96,7 @@ impl AudioSession {
         })?;
         trace_err!(event_loop.play_stream(stream.clone()))?;
 
-        let join_handle = Some(thread::spawn({
+        let join_handle = Some(trace_err!(thread::Builder::new().name("Audio thread".into()).spawn({
             let event_loop = event_loop.clone();
             move || {
                 event_loop.run(move |_, maybe_data| match maybe_data {
@@ -106,7 +106,7 @@ impl AudioSession {
                     Err(e) => warn!("{}", e),
                 });
             }
-        }));
+        }))?);
 
         Ok(AudioSession {
             event_loop,

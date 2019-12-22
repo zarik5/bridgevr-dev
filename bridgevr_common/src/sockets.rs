@@ -144,7 +144,7 @@ impl<SM> ConnectionManager<SM> {
         let udp_message_socket = Arc::new(create_udp_socket(peer_ip, MESSAGE_PORT)?);
         let tcp_message_socket = Arc::new(tcp_message_socket);
 
-        let udp_message_receiver_thread = thread_loop::spawn({
+        let udp_message_receiver_thread = thread_loop::spawn("UDP message receiver", {
             let message_received_callback = message_received_callback.clone();
             let udp_message_socket = udp_message_socket.clone();
             let mut packet_buffer = [0; MAX_PACKET_SIZE_BYTES];
@@ -165,9 +165,9 @@ impl<SM> ConnectionManager<SM> {
             move || {
                 try_receive().ok();
             }
-        });
+        })?;
 
-        let tcp_message_receiver_thread = thread_loop::spawn({
+        let tcp_message_receiver_thread = thread_loop::spawn("TCP message receiver", {
             let tcp_message_socket = tcp_message_socket.clone();
 
             move || match bincode::deserialize_from(&*tcp_message_socket) {
@@ -177,7 +177,7 @@ impl<SM> ConnectionManager<SM> {
                     //todo: shutdown
                 }
             }
-        });
+        })?;
 
         Ok(ConnectionManager {
             peer_ip,
@@ -270,6 +270,7 @@ impl<SM> ConnectionManager<SM> {
 
     pub fn begin_send_buffers(
         &mut self,
+        thread_name: &str,
         port: u16,
         mut buffer_consumer: Consumer<SenderData>,
     ) -> StrResult<()> {
@@ -280,11 +281,11 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.sender_thread.is_some() {
-            return Err(format!("Already sending on port {}", port));
+            return trace_str!("Already sending on port {}", port);
         }
 
         let socket = socket_data_ref.socket.clone();
-        socket_data_ref.sender_thread = Some(thread_loop::spawn(move || {
+        socket_data_ref.sender_thread = Some(thread_loop::spawn(thread_name, move || {
             buffer_consumer
                 .consume(PACKET_TIMEOUT, |data| {
                     // todo: send() returns a usize. check that the whole packet is sent
@@ -295,13 +296,14 @@ impl<SM> ConnectionManager<SM> {
                 })
                 .map_err(|e| debug!("{:?}", e))
                 .ok();
-        }));
+        })?);
 
         Ok(())
     }
 
     pub fn begin_receive_indexed_buffers<M: Send + 'static>(
         &mut self,
+        thread_name: &str,
         port: u16,
         mut buffer_producer: Producer<ReceiverData<M>, u64>,
     ) -> StrResult<()> {
@@ -312,11 +314,11 @@ impl<SM> ConnectionManager<SM> {
         });
 
         if socket_data_ref.receiver_thread.is_some() {
-            return Err(format!("Already listening on port {}", port));
+            return trace_str!("Already listening on port {}", port);
         }
 
         let socket = socket_data_ref.socket.clone();
-        socket_data_ref.receiver_thread = Some(thread_loop::spawn(move || {
+        socket_data_ref.receiver_thread = Some(thread_loop::spawn(thread_name, move || {
             buffer_producer
                 .fill(PACKET_TIMEOUT, |data| -> Result<u64, ()> {
                     data.packet_size = socket.recv(&mut data.packet).map_err(|err| {
@@ -331,7 +333,7 @@ impl<SM> ConnectionManager<SM> {
                     ))
                 })
                 .ok();
-        }));
+        })?);
 
         Ok(())
     }

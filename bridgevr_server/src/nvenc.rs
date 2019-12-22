@@ -56,7 +56,7 @@ impl NvidiaEncoder {
         } else if cfg!(target_os = "linux") {
             "nvcuvid.so"
         } else {
-            return Err("Unsupported OS".into());
+            return trace_str!("Unsupported OS");
         };
         let module = trace_err!(Library::new(dyn_lib_name), "NvEnc library")?;
 
@@ -66,7 +66,7 @@ impl NvidiaEncoder {
         })?(&mut system_version))?;
 
         if ((NVENCAPI_MAJOR_VERSION << 4) | NVENCAPI_MINOR_VERSION) > system_version {
-            return Err("NVENC driver is too old".into());
+            return trace_str!("NVENC driver is too old");
         }
 
         let mut nvenc_instance = nv_struct!(NV_ENCODE_API_FUNCTION_LIST);
@@ -79,7 +79,7 @@ impl NvidiaEncoder {
 
         let mut encode_session_params = nv_struct!(NV_ENC_OPEN_ENCODE_SESSION_EX_PARAMS);
         encode_session_params.apiVersion = NVENCAPI_VERSION;
-        encode_session_params.device = graphics_device_ptr as *mut c_void;
+        encode_session_params.device = graphics_device_ptr as _;
         encode_session_params.deviceType = if cfg!(windows) {
             NV_ENC_DEVICE_TYPE_DIRECTX
         } else {
@@ -121,7 +121,7 @@ impl NvidiaEncoder {
         encode_config.frameIntervalP = 1; // set to 0 for intra frames only
         encode_config.gopLength = NVENC_INFINITE_GOPLENGTH; // requires P frames. Leave infinite GOP, IDR will be inserted manually
         let rc_params_ref = &mut encode_config.rcParams;
-        if let Some(rc_mode) = codec.rc_params.rate_control_mode {
+        if let Some(rc_mode) = codec.rate_control.mode {
             rc_params_ref.rateControlMode = match rc_mode {
                 RateControlMode::ConstantQP(maybe_qp_params) => {
                     if let Some(qp) = maybe_qp_params {
@@ -138,34 +138,33 @@ impl NvidiaEncoder {
                 RateControlMode::LowDelayCBR => NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ,
             };
         }
-        if let Some(bitrate_k) = codec.rc_params.bitrate_k {
+        if let Some(bitrate_k) = codec.rate_control.bitrate_k {
             rc_params_ref.averageBitRate = bitrate_k * 1000;
         }
-        if let Some(vbv_buffer_size) = codec.rc_params.vbv_buffer_size {
+        if let Some(vbv_buffer_size) = codec.rate_control.vbv_buffer_size {
             rc_params_ref.vbvBufferSize = vbv_buffer_size;
         }
-        if let Some(vbv_initial_delay) = codec.rc_params.vbv_initial_delay {
+        if let Some(vbv_initial_delay) = codec.rate_control.vbv_initial_delay {
             rc_params_ref.vbvInitialDelay = vbv_initial_delay;
         }
-        if let Some(aq) = &codec.rc_params.aq {
+        if let Some(aq) = &codec.rate_control.aq {
             rc_params_ref._bitfield_1.set_bit(3, aq.enable_spatial);
             rc_params_ref._bitfield_1.set_bit(8, aq.enable_temporal);
             rc_params_ref._bitfield_1.set(12, 4, aq.strength as _);
         };
-        if let Some(zero_latency) = codec.rc_params.zero_latency {
+        if let Some(zero_latency) = codec.rate_control.zero_latency {
             rc_params_ref._bitfield_1.set_bit(9, zero_latency);
         }
-        if let Some(enable_non_ref_p) = codec.rc_params.enable_non_ref_p {
+        if let Some(enable_non_ref_p) = codec.rate_control.enable_non_ref_p {
             rc_params_ref._bitfield_1.set_bit(10, enable_non_ref_p);
         }
-        if let Some(strict_gop_target) = codec.rc_params.strict_gop_target {
+        if let Some(strict_gop_target) = codec.rate_control.strict_gop_target {
             rc_params_ref._bitfield_1.set_bit(11, strict_gop_target);
         }
 
         unsafe { encode_config.encodeCodecConfig.h264Config }.chromaFormatIDC = match codec
             .chroma_format
-            .as_ref()
-            .unwrap_or(&ChromaFormat::YUV420)
+            .unwrap_or(ChromaFormat::YUV420)
         {
             ChromaFormat::YUV420 => 1,
             ChromaFormat::YUV444 => 3,
@@ -181,9 +180,9 @@ impl NvidiaEncoder {
         input_resource_params.resourceType = if cfg!(windows) {
             NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX
         } else {
-            NV_ENC_INPUT_RESOURCE_TYPE_OPENGL_TEX
+            NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY
         };
-        input_resource_params.resourceToRegister = input_texture as *mut c_void;
+        input_resource_params.resourceToRegister = input_texture as _;
         input_resource_params.width = width;
         input_resource_params.height = height;
         input_resource_params.pitch = 0;
@@ -233,5 +232,7 @@ impl NvidiaEncoder {
     }
 }
 
-// nvenc does not accept vulkan image as source
-// instead use: vulkan -> GL_NV_draw_vulkan_image -> nvenc
+// nvenc does not accept directly a vulkan image as source
+// see:
+// https://devtalk.nvidia.com/default/topic/1045258/video-codec-and-optical-flow-sdk/use-video-codec-sdk-to-encode-vulkan-images/
+// https://stackoverflow.com/questions/55424875/use-vulkan-vkimage-as-a-cuda-cuarray

@@ -31,6 +31,14 @@ pub fn error_format(message: &str, file_name: &str, line: u32) -> String {
 }
 
 #[macro_export]
+macro_rules! trace_str {
+    ($expect_fmt:expr $(, $args:expr)*) => {
+        Err(format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!()) +
+            ", " + &format!($expect_fmt $(, $args)*))
+    };
+}
+
+#[macro_export]
 macro_rules! trace_err {
     ($res:expr $(, $expect_fmt:expr $(, $args:expr)*)?) => {
         $res.map_err(|e| {

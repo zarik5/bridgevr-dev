@@ -1,5 +1,8 @@
-use std::sync::{Arc, atomic::*};
+use crate::*;
+use std::sync::{atomic::*, Arc};
 use std::thread::{self, JoinHandle};
+
+const TRACE_CONTEXT: &str = "Thread loop";
 
 pub struct ThreadLoop {
     join_handle: Option<JoinHandle<()>>,
@@ -19,20 +22,20 @@ impl Drop for ThreadLoop {
     }
 }
 
-pub fn spawn(mut loop_body: impl FnMut() + Send + 'static) -> ThreadLoop {
+pub fn spawn(name: &str, mut loop_body: impl FnMut() + Send + 'static) -> StrResult<ThreadLoop> {
     let running = Arc::new(AtomicBool::new(true));
 
-    let join_handle = Some(thread::spawn({
+    let join_handle = Some(trace_err!(thread::Builder::new().name(name.into()).spawn({
         let running = running.clone();
         move || {
             while running.load(Ordering::Relaxed) {
                 loop_body()
             }
         }
-    }));
+    }))?);
 
-    ThreadLoop {
+    Ok(ThreadLoop {
         join_handle,
         running,
-    }
+    })
 }

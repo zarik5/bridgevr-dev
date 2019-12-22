@@ -27,6 +27,8 @@ use video_encoder::*;
 // found" error.
 use parking_lot::Mutex;
 
+const TRACE_CONTEXT: &str = "Driver main";
+
 const TIMEOUT: Duration = Duration::from_secs(1);
 
 fn get_settings() -> StrResult<Settings> {
@@ -52,34 +54,36 @@ fn begin_server_loop(
 
         // if any error is encountered, display it immediately to avoid waiting for every object to
         // drop
-        move |shutdown_signal_receiver: &Receiver<ShutdownSignal>| -> Result<ShutdownSignal, ()> {
+        move |shutdown_signal_receiver: &Receiver<ShutdownSignal>| -> StrResult<ShutdownSignal> {
             let settings = if let Ok(settings) = get_settings() {
                 settings
             } else {
                 thread::sleep(Duration::from_secs(1));
-                show_err!(get_settings())?
+                get_settings()?
             };
             let receiver_data_port = settings.connection.starting_data_port;
             let mut next_sender_data_port = settings.connection.starting_data_port;
 
             let (client_handshake_packet, client_candidate_desc) =
-                show_err!(search_client(&settings.connection.client_ip, TIMEOUT))?;
+                search_client(&settings.connection.client_ip, TIMEOUT)?;
 
             if client_handshake_packet.version < BVR_MIN_VERSION_CLIENT {
-                show_err_str!(
+                return trace_str!(
                     "Espected client of version {} or greater, found {}.",
                     BVR_MIN_VERSION_CLIENT,
                     client_handshake_packet.version
                 );
-                return Err(());
             }
 
-            {
-                let mut session_desc_loader = session_desc_loader.lock();
-                session_desc_loader.get_mut().last_client_handshake_packet =
-                    Some(client_handshake_packet.clone());
-                session_desc_loader.save().map_err(|e| warn!("{}", e)).ok();
-            }
+            session_desc_loader
+                .lock()
+                .get_mut()
+                .last_client_handshake_packet = Some(client_handshake_packet.clone());
+            session_desc_loader
+                .lock()
+                .save()
+                .map_err(|e| warn!("{}", e))
+                .ok();
 
             let (target_eye_width, target_eye_height) = match &settings.video.frame_size {
                 FrameSize::Scale(scale) => {
@@ -101,28 +105,24 @@ fn begin_server_loop(
 
             let client_statistics = Arc::new(Mutex::new(ClientStatistics::default()));
 
-            let connection_manager = Arc::new(Mutex::new(show_err!(
-                ConnectionManager::connect_to_client(
-                    client_candidate_desc,
-                    server_handshake_packet,
-                    {
-                        let shutdown_signal_sender = shutdown_signal_sender.clone();
-                        let openvr_backend = openvr_backend.clone();
-                        move |message| match message {
-                            ClientMessage::Update(input) => {
-                                openvr_backend.lock().update_input(&input)
-                            }
-                            ClientMessage::Statistics(client_stats) => {
-                                *client_statistics.lock() = client_stats
-                            }
-                            ClientMessage::Disconnected => {
-                                shutdown_signal_sender
-                                    .send(ShutdownSignal::ClientDisconnected)
-                                    .ok();
-                            }
+            let connection_manager = Arc::new(Mutex::new(ConnectionManager::connect_to_client(
+                client_candidate_desc,
+                server_handshake_packet,
+                {
+                    let shutdown_signal_sender = shutdown_signal_sender.clone();
+                    let openvr_backend = openvr_backend.clone();
+                    move |message| match message {
+                        ClientMessage::Update(input) => openvr_backend.lock().update_input(&input),
+                        ClientMessage::Statistics(client_stats) => {
+                            *client_statistics.lock() = client_stats
                         }
-                    },
-                )
+                        ClientMessage::Disconnected => {
+                            shutdown_signal_sender
+                                .send(ShutdownSignal::ClientDisconnected)
+                                .ok();
+                        }
+                    }
+                },
             )?));
 
             let mut slice_producers = vec![];
@@ -134,18 +134,21 @@ fn begin_server_loop(
             }
 
             let mut video_encoders = vec![];
-            for slice_consumer in slice_consumers {
+            for (idx, slice_consumer) in slice_consumers.into_iter().enumerate() {
                 let (video_packet_producer, video_packet_consumer) = queue_channel_split();
 
-                video_encoders.push(show_err!(VideoEncoder::new(
+                video_encoders.push(VideoEncoder::new(
+                    &format!("Video encoder loop {}", idx),
                     settings.video.encoder.clone(),
                     slice_consumer,
                     video_packet_producer,
-                ))?);
+                )?);
 
-                show_err!(connection_manager
-                    .lock()
-                    .begin_send_buffers(next_sender_data_port, video_packet_consumer))?;
+                connection_manager.lock().begin_send_buffers(
+                    &format!("Video packet sender loop {}", idx),
+                    next_sender_data_port,
+                    video_packet_consumer,
+                )?;
                 next_sender_data_port += 1;
             }
 
@@ -153,10 +156,12 @@ fn begin_server_loop(
                 Switch::Enabled(device_idx) => {
                     let (producer, consumer) = queue_channel_split();
                     let audio_recorder =
-                        show_err!(AudioRecorder::start_recording(device_idx, true, producer))?;
-                    show_err!(connection_manager
-                        .lock()
-                        .begin_send_buffers(next_sender_data_port, consumer))?;
+                        AudioRecorder::start_recording(device_idx, true, producer)?;
+                    connection_manager.lock().begin_send_buffers(
+                        "Game audio send loop",
+                        next_sender_data_port,
+                        consumer,
+                    )?;
                     Some(audio_recorder)
                 }
                 Switch::Disabled => None,
@@ -165,13 +170,15 @@ fn begin_server_loop(
             let mut maybe_microphone_player = match &settings.audio.microphone {
                 Switch::Enabled(mic) => {
                     let (producer, consumer) = keyed_channel_split(Duration::from_millis(100));
-                    show_err!(connection_manager
-                        .lock()
-                        .begin_receive_indexed_buffers(receiver_data_port, producer))?;
-                    Some(show_err!(AudioPlayer::start_playback(
+                    connection_manager.lock().begin_receive_indexed_buffers(
+                        "Microphone audio receive loop",
+                        receiver_data_port,
+                        producer,
+                    )?;
+                    Some(AudioPlayer::start_playback(
                         Some(mic.server_device_index),
                         consumer,
-                    ))?)
+                    )?)
                 }
                 Switch::Disabled => None,
             };
@@ -179,7 +186,7 @@ fn begin_server_loop(
             let (present_producer, present_consumer) = queue_channel_split();
             let sync_handle_mutex = Arc::new(Mutex::new(()));
 
-            let mut compositor = show_err!(Compositor::new(
+            let mut compositor = Compositor::new(
                 graphics.clone(),
                 CompositorSettings {
                     target_eye_width,
@@ -190,7 +197,7 @@ fn begin_server_loop(
                 present_consumer,
                 sync_handle_mutex.clone(),
                 slice_producers,
-            ))?;
+            )?;
 
             openvr_backend
                 .lock()
@@ -257,24 +264,25 @@ fn begin_server_loop(
         }
     };
 
-    thread::spawn(move || {
-        while Instant::now() < deadline {
-            match try_connect(&shutdown_signal_receiver) {
-                Ok(ShutdownSignal::ClientDisconnected) => deadline = Instant::now() + timeout,
-                Ok(ShutdownSignal::BackendShutdown) => break,
-                Err(()) => {
-                    if let Ok(ShutdownSignal::BackendShutdown) | Err(TryRecvError::Disconnected) =
-                        shutdown_signal_receiver.try_recv()
-                    {
-                        break;
+    trace_err!(thread::Builder::new()
+        .name("Connection/statistics loop".into())
+        .spawn(move || {
+            while Instant::now() < deadline {
+                match show_err!(try_connect(&shutdown_signal_receiver)) {
+                    Ok(ShutdownSignal::ClientDisconnected) => deadline = Instant::now() + timeout,
+                    Ok(ShutdownSignal::BackendShutdown) => break,
+                    Err(()) => {
+                        if let Ok(ShutdownSignal::BackendShutdown)
+                        | Err(TryRecvError::Disconnected) = shutdown_signal_receiver.try_recv()
+                        {
+                            break;
+                        }
                     }
                 }
+                openvr_backend.lock().deinitialize_for_client();
             }
-            openvr_backend.lock().deinitialize_for_client();
-        }
-    });
-
-    Ok(())
+        })
+        .map(|_| ()))
 }
 
 // To make a minimum system, BridgeVR needs to instantiate Compositor and OpenvrServer.

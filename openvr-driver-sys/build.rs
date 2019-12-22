@@ -1,5 +1,4 @@
-use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 
 fn main() {
     let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());

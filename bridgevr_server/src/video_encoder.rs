@@ -20,12 +20,13 @@ pub struct VideoEncoder {
 
 impl VideoEncoder {
     pub fn new(
+        thread_name: &str,
         settings: VideoEncoderDesc,
         frame_consumer: Consumer<FrameSlice>,
         packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {
         let nv_encoder = NvidiaEncoder::new(todo!(), todo!(), todo!(), todo!(), todo!(), todo!());
-        let thread_loop = thread_loop::spawn(|| todo!());
+        let thread_loop = thread_loop::spawn(thread_name, || todo!())?;
 
         Ok(Self { thread_loop })
     }

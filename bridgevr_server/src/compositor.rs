@@ -358,9 +358,9 @@ impl Compositor {
             Ok(())
         };
 
-        let rendering_loop = thread_loop::spawn(move || {
+        let rendering_loop = thread_loop::spawn("Compositor loop", move || {
             render().ok();
-        });
+        })?;
 
         Ok(Self { rendering_loop })
     }

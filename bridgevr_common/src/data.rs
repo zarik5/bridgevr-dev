@@ -79,8 +79,8 @@ pub struct AQ {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct RateControlParams {
-    pub rate_control_mode: Option<RateControlMode>,
+pub struct RateControl {
+    pub mode: Option<RateControlMode>,
     pub bitrate_k: Option<u32>,
     pub vbv_buffer_size: Option<u32>,
     pub vbv_initial_delay: Option<u32>,
@@ -114,7 +114,7 @@ pub enum ChromaFormat {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NvCodecH264 {
     pub preset: Preset,
-    pub rc_params: RateControlParams,
+    pub rate_control: RateControl,
     pub hierarchical_p_frames: Option<bool>,
     pub intra_refresh: Option<Switch<IntraRefresh>>,
     pub level: Option<u32>,
