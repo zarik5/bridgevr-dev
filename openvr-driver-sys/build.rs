@@ -1,5 +1,3 @@
-use std::io::Write;
-
 fn main() {
     let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let include_flag_string = format!("-I{}", out_path.to_string_lossy());

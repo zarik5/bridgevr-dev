@@ -17,8 +17,8 @@ use gfx_hal::{
 use log::{debug, error};
 use parking_lot::Mutex;
 use std::{
-    ffi::c_void, fmt::Debug, iter, marker::PhantomData, mem::ManuallyDrop, mem::*, ptr, sync::Arc,
-    time::Duration, any::TypeId
+    any::TypeId, ffi::c_void, fmt::Debug, iter, marker::PhantomData, mem::ManuallyDrop, mem::*,
+    ptr, sync::Arc, time::Duration,
 };
 
 pub use gfx_hal::format::Format;
@@ -276,7 +276,7 @@ impl UniformBuffer {
             graphics_al,
             buffer_handle,
             buffer_memory,
-            struct_type: TypeId::of::<T>()
+            struct_type: TypeId::of::<T>(),
         })
     }
 
@@ -320,8 +320,7 @@ pub struct Texture {
     image_handle: ManuallyDrop<ImageImpl>,
     image_memory: ManuallyDrop<MemoryImpl>,
     image_view: ManuallyDrop<ImageViewImpl>,
-    width: u32,
-    height: u32,
+    resolution: (u32, u32),
     format: Format,
 }
 
@@ -370,8 +369,7 @@ impl Texture {
 
     pub fn new(
         graphics_al: Arc<GraphicsAbstractionLayer>,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         format: Format,
         sample_count: Option<u8>,
     ) -> StrResult<Self> {
@@ -401,8 +399,7 @@ impl Texture {
             image_handle,
             image_memory,
             image_view,
-            width,
-            height,
+            resolution: (width, height),
             format,
         })
     }
@@ -416,8 +413,7 @@ impl Texture {
     pub fn from_handle_and_desc(
         handle: u64,
         graphics_al: Arc<GraphicsAbstractionLayer>,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         format: Format,
     ) -> StrResult<Self> {
         todo!();

@@ -90,8 +90,7 @@ fn pose_from_openvr_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
 }
 
 struct OpenvrSettings {
-    target_eye_width: u32,
-    target_eye_height: u32,
+    target_eye_resolution: (u32, u32),
     fov: [Fov; 2],
     block_standby: bool,
     frame_interval: Duration,
@@ -104,7 +103,7 @@ fn create_openvr_settings(
     settings: Option<&Settings>,
     session_desc: &SessionDesc,
 ) -> OpenvrSettings {
-    let (target_eye_width, target_eye_height) = if let Some(Settings {
+    let target_eye_resolution = if let Some(Settings {
         openvr:
             OpenvrDesc {
                 preferred_render_eye_resolution: Some(eye_res),
@@ -134,7 +133,7 @@ fn create_openvr_settings(
 
     let frame_interval =
         if let Some(client_handshake_packet) = &session_desc.last_client_handshake_packet {
-            Duration::from_secs_f32(1_f32 / client_handshake_packet.fps)
+            Duration::from_secs_f32(1_f32 / client_handshake_packet.fps as f32)
         } else {
             DEFAULT_FRAME_INTERVAL
         };
@@ -158,8 +157,7 @@ fn create_openvr_settings(
     };
 
     OpenvrSettings {
-        target_eye_width,
-        target_eye_height,
+        target_eye_resolution,
         fov,
         block_standby,
         frame_interval,
@@ -196,25 +194,25 @@ fn create_display_callbacks(
     vr::DisplayComponentCallbacks {
         context: hmd_context,
         get_window_bounds: |context, x, y, width, height| {
-            let settings = context.settings.lock();
+            let (eye_width, eye_height) = context.settings.lock().target_eye_resolution;
             *x = 0;
             *y = 0;
-            *width = settings.target_eye_width * 2;
-            *height = settings.target_eye_height;
+            *width = eye_width * 2;
+            *height = eye_height;
         },
         is_display_on_desktop: |_| false,
         is_display_real_display: |_| false,
         get_recommended_render_target_size: |context, width, height| {
-            let settings = context.settings.lock();
-            *width = settings.target_eye_width * 2;
-            *height = settings.target_eye_height;
+            let (eye_width, eye_height) = context.settings.lock().target_eye_resolution;
+            *width = eye_width * 2;
+            *height = eye_height;
         },
         get_eye_output_viewport: |context, eye, x, y, width, height| {
-            let settings = context.settings.lock();
-            *x = settings.target_eye_width * (eye as u32);
+            let (eye_width, eye_height) = context.settings.lock().target_eye_resolution;
+            *x = eye_width * (eye as u32);
             *y = 0;
-            *width = settings.target_eye_width;
-            *height = settings.target_eye_height;
+            *width = eye_width;
+            *height = eye_height;
         },
         get_projection_raw: |context, eye, left, right, top, bottom| {
             let settings = context.settings.lock();
@@ -309,8 +307,7 @@ fn create_driver_direct_mode_callbacks(
                 .graphics
                 .lock()
                 .create_swap_texture_set(
-                    swap_texture_set_desc.nWidth,
-                    swap_texture_set_desc.nHeight,
+                    (swap_texture_set_desc.nWidth, swap_texture_set_desc.nHeight),
                     format,
                     swap_texture_set_desc.nSampleCount as _,
                 )

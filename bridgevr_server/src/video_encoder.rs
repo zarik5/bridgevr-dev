@@ -6,8 +6,14 @@ use bridgevr_common::{
     thread_loop::{self, *},
     *,
 };
+use log::debug;
+use std::time::Duration;
 
-pub fn aligned_resolution(width: u32, height: u32) -> (u32, u32) {
+const TRACE_CONTEXT: &str = "Video encoder";
+
+const TIMEOUT: Duration = Duration::from_millis(100);
+
+pub fn aligned_resolution((width, height): (u32, u32)) -> (u32, u32) {
     (
         ((width / 16) as f32).ceil() as u32 * 16,
         ((height / 16) as f32).ceil() as u32 * 16,
@@ -22,11 +28,46 @@ impl VideoEncoder {
     pub fn new(
         thread_name: &str,
         settings: VideoEncoderDesc,
-        frame_consumer: Consumer<FrameSlice>,
-        packet_producer: Producer<SenderData>,
+        resolution: (u32, u32),
+        frame_rate: u32,
+        graphics_device_ptr: u64,
+        mut frame_consumer: Consumer<FrameSlice>,
+        mut packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {
-        let nv_encoder = NvidiaEncoder::new(todo!(), todo!(), todo!(), todo!(), todo!(), todo!());
-        let thread_loop = thread_loop::spawn(thread_name, || todo!())?;
+        let encode_callback = match settings {
+            VideoEncoderDesc::Nvidia(nv_codec) => {
+                let encoder =
+                    NvidiaEncoder::new(graphics_device_ptr, resolution, frame_rate, nv_codec)?;
+
+                move |texture, force_idr| encoder.encode(force_idr, texture)
+            }
+            VideoEncoderDesc::Gstreamer(pipeline_str) => todo!(),
+        };
+
+        let thread_loop = thread_loop::spawn(thread_name, move || {
+            let mut maybe_video_packet = None;
+            frame_consumer
+                .consume(TIMEOUT, |frame_slice| {
+                    maybe_video_packet =
+                        encode_callback(frame_slice.texture.clone(), frame_slice.force_idr)
+                            .map_err(|e| debug!("{}", e))
+                            .ok();
+                    Ok(())
+                })
+                .map_err(|e| debug!("{:?}", e))
+                .ok();
+
+            if let Some(video_packet) = maybe_video_packet {
+                packet_producer
+                    .fill(TIMEOUT, |sender_data| {
+                        sender_data.packet = video_packet;
+                        // todo fill other fields
+                        Ok(())
+                    })
+                    .map_err(|e| debug!("{:?}", e))
+                    .ok();
+            }
+        })?;
 
         Ok(Self { thread_loop })
     }

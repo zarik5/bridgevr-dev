@@ -131,7 +131,7 @@ pub struct NvCodecH264 {
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum FrameSize {
     Scale(f32),
-    Absolute { width: u32, height: u32 },
+    Absolute(u32, u32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -196,9 +196,10 @@ pub struct FoveatedRenderingDesc {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct VideoDesc {
     pub frame_size: FrameSize,
+    pub halve_frame_rate: bool,
     pub composition_filtering: CompositionFilteringType,
     pub foveated_rendering: Switch<FoveatedRenderingDesc>,
-    pub slice_count: u64,
+    pub frame_slice_count: u64,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
 }
@@ -387,7 +388,7 @@ pub struct ClientHandshakePacket {
     pub version: Version,
     pub native_eye_resolution: (u32, u32),
     pub fov: [Fov; 2],
-    pub fps: f32,
+    pub fps: u32,
 
     // this is used to determine type and count of input devices
     pub input_device_initial_data: InputDeviceData,
@@ -400,8 +401,7 @@ pub struct ClientStatistics {}
 pub struct ServerHandshakePacket {
     pub version: Version,
     pub settings: Settings,
-    pub target_eye_width: u32,
-    pub target_eye_height: u32,
+    pub target_eye_resolution: (u32, u32),
 }
 
 #[derive(Serialize, Deserialize)]

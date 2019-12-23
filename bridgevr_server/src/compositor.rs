@@ -78,8 +78,7 @@ impl Graphics {
 
     pub fn create_swap_texture_set(
         &mut self,
-        width: u32,
-        height: u32,
+        resolution: (u32, u32),
         format: Format,
         sample_count: u8,
     ) -> StrResult<(usize, [u64; 3])> {
@@ -87,8 +86,7 @@ impl Graphics {
         for handle in &mut handles {
             let texture = Texture::new(
                 self.graphics_al.clone(),
-                width,
-                height,
+                resolution,
                 format,
                 Some(sample_count),
             )?;
@@ -116,13 +114,13 @@ impl Graphics {
 }
 
 pub struct CompositorSettings {
-    pub target_eye_width: u32,
-    pub target_eye_height: u32,
+    pub target_eye_resolution: (u32, u32),
     pub filter_type: CompositionFilteringType,
     pub ffr_desc: Option<data::FoveatedRenderingDesc>,
 }
 
 pub struct Compositor {
+    encoder_resolution: (u32, u32),
     rendering_loop: ThreadLoop,
 }
 
@@ -135,8 +133,7 @@ impl Compositor {
         mut slice_producers: Vec<Producer<FrameSlice>>,
     ) -> StrResult<Self> {
         let CompositorSettings {
-            target_eye_width,
-            target_eye_height,
+            target_eye_resolution,
             filter_type,
             ffr_desc,
         } = settings;
@@ -145,64 +142,54 @@ impl Compositor {
 
         let composition_texture = Arc::new(Texture::new(
             graphics_al.clone(),
-            target_eye_width,
-            target_eye_height,
+            target_eye_resolution,
             Format::Rgba8Unorm,
             None,
         )?);
 
         let mut rendering_operation_descs = vec![];
 
-        let compressed_eye_width;
-        let compressed_eye_height;
+        let compressed_eye_resolution;
         let compressed_texture;
         match ffr_desc {
             Some(ffr_desc) => {
-                let (width, height) =
-                    ffr_compressed_eye_resolution(target_eye_width, target_eye_height, ffr_desc);
-                compressed_eye_width = width;
-                compressed_eye_height = height;
+                compressed_eye_resolution =
+                    ffr_compressed_eye_resolution(target_eye_resolution, ffr_desc);
                 compressed_texture = Arc::new(Texture::new(
                     graphics_al.clone(),
-                    compressed_eye_width,
-                    compressed_eye_height,
+                    compressed_eye_resolution,
                     Format::Rgba8Unorm,
                     None,
                 )?);
 
                 let ffr_operation_descs = ffr_compression_operation_descs(
                     composition_texture.clone(),
-                    target_eye_width,
-                    target_eye_height,
-                    compressed_eye_width,
-                    compressed_eye_height,
+                    target_eye_resolution,
+                    compressed_eye_resolution,
                 );
 
                 rendering_operation_descs.extend(ffr_operation_descs);
             }
             None => {
-                compressed_eye_width = target_eye_width;
-                compressed_eye_height = target_eye_height;
+                compressed_eye_resolution = target_eye_resolution;
                 compressed_texture = composition_texture.clone();
             }
         }
 
-        let compressed_frame_width = compressed_eye_width * 2;
-        let compressed_frame_height = compressed_eye_height;
+        let (compressed_eye_width, compressed_eye_height) = compressed_eye_resolution;
+        let compressed_frame_resolution = (compressed_eye_width * 2, compressed_eye_height);
 
         let slices_desc = slices_desc_from_count(
             slice_producers.len(),
-            compressed_frame_width,
-            compressed_frame_height,
+            compressed_frame_resolution,
         );
-        let (aligned_slice_width, aligned_slice_height) =
-            aligned_resolution(slices_desc.single_width, slices_desc.single_height);
+        let encoder_resolution =
+            aligned_resolution(slices_desc.single_resolution);
 
         for (idx, prod) in slice_producers.iter_mut().enumerate() {
             let slice_texture = Arc::new(Texture::new(
                 graphics_al.clone(),
-                aligned_slice_width,
-                aligned_slice_height,
+                encoder_resolution,
                 Format::Rgba8Unorm,
                 None,
             )?);
@@ -214,14 +201,11 @@ impl Compositor {
                 force_idr: false,
             });
 
-            let (start_x, start_y) = get_slice_start(idx, &slices_desc);
+            let start = get_slice_start(idx, &slices_desc);
             let bounds = slice_bounds_to_texture_bounds(
-                compressed_frame_width,
-                compressed_frame_height,
-                start_x,
-                start_y,
-                aligned_slice_width,
-                aligned_slice_height,
+                compressed_frame_resolution,
+                start,
+                encoder_resolution,
             );
             let copy_operation = OperationDesc::CopyTexture {
                 input: compressed_texture.clone(),
@@ -362,69 +346,17 @@ impl Compositor {
             render().ok();
         })?;
 
-        Ok(Self { rendering_loop })
+        Ok(Self {
+            rendering_loop,
+            encoder_resolution,
+        })
+    }
+
+    pub fn encoder_resolution(&self) -> (u32, u32) {
+        self.encoder_resolution
     }
 
     pub fn request_stop(&mut self) {
         self.rendering_loop.request_stop()
     }
-
-    // pub fn select_input_texture(&mut self, shared_texture_handle: u64) {
-    //     let shared_texture_ref = match self.swap_textures.get(&shared_texture_handle) {
-    //         Some(texture) => texture,
-    //         None => {
-    //             if self.swap_textures.len() == MAX_SWAP_TEXTURES {
-    //                 self.swap_textures.clear();
-    //                 self.operation_buffers.clear();
-    //             }
-    //             let texture = Arc::new(Texture::from_ptr(
-    //                 self.graphics.clone(),
-    //                 shared_texture_handle,
-    //             ));
-    //             self.swap_textures.insert(shared_texture_handle, texture);
-    //             &self.swap_textures[&shared_texture_handle]
-    //         }
-    //     };
-
-    //     shared_texture_ref.wait_for_signal();
-
-    //     self.operation_buffers
-    //         .entry(shared_texture_handle)
-    //         .or_insert({
-    //             let commands = if let Some(ffr_desc) = &self.ffr_desc {
-    //                 todo!();
-    //             } else {
-    //                 vec![OperationDesc::CopyTexture {
-    //                     input: shared_texture_ref.clone(),
-    //                     output: self.encoder_input_texture.clone(),
-    //                 }]
-    //             };
-    //             OperationBuffer::new(self.graphics.clone(), commands)
-    //         });
-
-    //     self.selected_input_texture_handle = shared_texture_handle;
-    // }
-
-    // Return as soon the texture has been locked and then
-    // pub fn present(&self, shared_texture_handle: u64) {
-    //     if let Some(operation_buffer) = self
-    //         .operation_buffers
-    //         .get(&self.selected_input_texture_handle)
-    //     {
-    //         operation_buffer.execute();
-    //     }
-    // }
-
-    // // Wait until the current layers have been used
-    // pub fn post_present(&self) {
-    //     if let Some(client) = self.client {
-    //         for [h1, h2] in client.selected_textures_handles {}
-    //         if let Some(layers) = self
-    //             .swap_textures
-    //             .get(&client.selected_input_texture_handle)
-    //         {
-    //             layers.lock().ok();
-    //         }
-    //     }
-    // }
 }

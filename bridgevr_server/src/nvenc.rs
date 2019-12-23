@@ -1,8 +1,7 @@
-use bridgevr_common::{data::*, *};
+use bridgevr_common::{data::*, rendering::*, *};
 use libloading::*;
 use nvidia_video_codec_sdk_sys::*;
-use std::ffi::c_void;
-use std::ptr::*;
+use std::{ops::Deref, ptr::*, sync::Arc};
 
 macro_rules! nv_trace_err {
     ($res:expr) => {{
@@ -32,24 +31,32 @@ macro_rules! nv_struct {
 
 const TRACE_CONTEXT: &str = "NVENC";
 
+// There are raw pointers inside NV_ENCODE_API_FUNCTION_LIST that are not Send
+struct NvFuctionListWrapper(NV_ENCODE_API_FUNCTION_LIST);
+impl Deref for NvFuctionListWrapper {
+    type Target = NV_ENCODE_API_FUNCTION_LIST;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+unsafe impl Send for NvFuctionListWrapper {}
+unsafe impl Sync for NvFuctionListWrapper {}
+
 pub struct NvidiaEncoder {
     module: Library,
-    nvenc_instance: NV_ENCODE_API_FUNCTION_LIST,
-    encoder_ptr: *mut c_void,
-    input_resource_ptr: *mut c_void,
-    output_bitstream_ptr: *mut c_void,
-    width: u32,
-    height: u32,
+    nvenc_instance: NvFuctionListWrapper,
+    encoder_ptr: u64,
+    input_resource_ptr: Option<u64>,
+    output_bitstream_ptr: u64,
+    resolution: (u32, u32),
 }
 
 impl NvidiaEncoder {
     pub fn new(
         graphics_device_ptr: u64,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         frame_rate: u32,
         codec: NvCodecH264,
-        input_texture: u64, //DXGI_FORMAT_B8G8R8A8_UNORM!
     ) -> StrResult<Self> {
         let dyn_lib_name = if cfg!(windows) {
             "nvEncodeAPI64.dll"
@@ -162,35 +169,17 @@ impl NvidiaEncoder {
             rc_params_ref._bitfield_1.set_bit(11, strict_gop_target);
         }
 
-        unsafe { encode_config.encodeCodecConfig.h264Config }.chromaFormatIDC = match codec
-            .chroma_format
-            .unwrap_or(ChromaFormat::YUV420)
-        {
-            ChromaFormat::YUV420 => 1,
-            ChromaFormat::YUV444 => 3,
-        };
+        unsafe { encode_config.encodeCodecConfig.h264Config }.chromaFormatIDC =
+            match codec.chroma_format.unwrap_or(ChromaFormat::YUV420) {
+                ChromaFormat::YUV420 => 1,
+                ChromaFormat::YUV444 => 3,
+            };
         //todo: bind the rest of the parameters
         //todo check that idrPeriod is automatically set
 
         init_params.encodeConfig = &mut encode_config;
 
         nv_call_trace_err!(nvenc_instance.nvEncInitializeEncoder(encoder_ptr, &mut init_params))?;
-
-        let mut input_resource_params = nv_struct!(NV_ENC_REGISTER_RESOURCE);
-        input_resource_params.resourceType = if cfg!(windows) {
-            NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX
-        } else {
-            NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY
-        };
-        input_resource_params.resourceToRegister = input_texture as _;
-        input_resource_params.width = width;
-        input_resource_params.height = height;
-        input_resource_params.pitch = 0;
-        input_resource_params.bufferFormat = NV_ENC_BUFFER_FORMAT_ARGB;
-        input_resource_params.bufferUsage = NV_ENC_INPUT_IMAGE;
-        nv_call_trace_err!(
-            nvenc_instance.nvEncRegisterResource(encoder_ptr, &mut input_resource_params)
-        )?;
 
         let mut output_bitstream_param = nv_struct!(NV_ENC_CREATE_BITSTREAM_BUFFER);
         nv_call_trace_err!(
@@ -199,33 +188,60 @@ impl NvidiaEncoder {
 
         Ok(Self {
             module,
-            nvenc_instance,
-            encoder_ptr,
-            input_resource_ptr: input_resource_params.registeredResource,
-            output_bitstream_ptr: output_bitstream_param.bitstreamBuffer,
-            width,
-            height,
+            nvenc_instance: NvFuctionListWrapper(nvenc_instance),
+            encoder_ptr: encoder_ptr as _,
+            input_resource_ptr: None,
+            output_bitstream_ptr: output_bitstream_param.bitstreamBuffer as _,
+            resolution: (width, height),
         })
     }
 
-    fn encode(&self, force_idr: bool) -> StrResult<()> {
-        let nvenc_instance = self.nvenc_instance;
+    pub fn encode(
+        &self,
+        force_idr: bool,
+        texture: Arc<Texture>, //DXGI_FORMAT_B8G8R8A8_UNORM!
+    ) -> StrResult<Vec<u8>> {
+        let (width, height) = self.resolution;
+        let nvenc_instance = &self.nvenc_instance;
+
+        let input_resource_ptr = if let Some(input_resource_ptr) = self.input_resource_ptr {
+            input_resource_ptr
+        } else {
+            let mut input_resource_params = nv_struct!(NV_ENC_REGISTER_RESOURCE);
+            input_resource_params.resourceType = if cfg!(windows) {
+                NV_ENC_INPUT_RESOURCE_TYPE_DIRECTX
+            } else {
+                NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY
+            };
+            input_resource_params.resourceToRegister = texture.as_ptr() as _;
+            input_resource_params.width = width;
+            input_resource_params.height = height;
+            input_resource_params.pitch = 0;
+            input_resource_params.bufferFormat = NV_ENC_BUFFER_FORMAT_ARGB;
+            input_resource_params.bufferUsage = NV_ENC_INPUT_IMAGE;
+            nv_call_trace_err!(nvenc_instance
+                .nvEncRegisterResource(self.encoder_ptr as _, &mut input_resource_params))?;
+
+            input_resource_params.registeredResource as _
+        };
 
         let mut input_resource_params = nv_struct!(NV_ENC_MAP_INPUT_RESOURCE);
-        input_resource_params.registeredResource = self.input_resource_ptr;
+        input_resource_params.registeredResource = input_resource_ptr as _;
         nv_call_trace_err!(
-            nvenc_instance.nvEncMapInputResource(self.encoder_ptr, &mut input_resource_params)
+            nvenc_instance.nvEncMapInputResource(self.encoder_ptr as _, &mut input_resource_params)
         )?;
         let mapped_input_resource_ptr = input_resource_params.mappedResource;
         let mut pic_params = nv_struct!(NV_ENC_PIC_PARAMS);
         pic_params.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
         pic_params.inputBuffer = mapped_input_resource_ptr;
         pic_params.bufferFmt = NV_ENC_BUFFER_FORMAT_ARGB;
-        pic_params.inputWidth = self.width;
-        pic_params.inputHeight = self.height;
-        pic_params.outputBitstream = self.output_bitstream_ptr;
+        pic_params.inputWidth = width;
+        pic_params.inputHeight = height;
+        pic_params.outputBitstream = self.output_bitstream_ptr as _;
 
-        nv_call_trace_err!(nvenc_instance.nvEncEncodePicture(self.encoder_ptr, &mut pic_params))?;
+        nv_call_trace_err!(
+            nvenc_instance.nvEncEncodePicture(self.encoder_ptr as _, &mut pic_params)
+        )?;
         // (NV_ENC_ERR_NEED_MORE_INPUT should never happen)
 
         todo!();

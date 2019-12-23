@@ -85,7 +85,7 @@ fn begin_server_loop(
                 .map_err(|e| warn!("{}", e))
                 .ok();
 
-            let (target_eye_width, target_eye_height) = match &settings.video.frame_size {
+            let target_eye_resolution = match &settings.video.frame_size {
                 FrameSize::Scale(scale) => {
                     let (native_eye_width, native_eye_height) =
                         client_handshake_packet.native_eye_resolution;
@@ -93,14 +93,13 @@ fn begin_server_loop(
                     let height = (native_eye_height as f32 * *scale) as _;
                     (width, height)
                 }
-                FrameSize::Absolute { width, height } => (*width, *height),
+                FrameSize::Absolute(width, height) => (*width, *height),
             };
 
             let server_handshake_packet = ServerHandshakePacket {
                 version: BVR_VERSION_SERVER,
                 settings: settings.clone(),
-                target_eye_width,
-                target_eye_height,
+                target_eye_resolution,
             };
 
             let client_statistics = Arc::new(Mutex::new(ClientStatistics::default()));
@@ -127,11 +126,28 @@ fn begin_server_loop(
 
             let mut slice_producers = vec![];
             let mut slice_consumers = vec![];
-            for _ in 0..settings.video.slice_count {
+            for _ in 0..settings.video.frame_slice_count {
                 let (producer, consumer) = queue_channel_split();
                 slice_producers.push(producer);
                 slice_consumers.push(consumer);
             }
+
+            let (present_producer, present_consumer) = queue_channel_split();
+            let sync_handle_mutex = Arc::new(Mutex::new(()));
+
+            let mut compositor = Compositor::new(
+                graphics.clone(),
+                CompositorSettings {
+                    target_eye_resolution,
+                    filter_type: settings.video.composition_filtering,
+                    ffr_desc: settings.video.foveated_rendering.clone().into_option(),
+                },
+                present_consumer,
+                sync_handle_mutex.clone(),
+                slice_producers,
+            )?;
+
+            let video_encoder_resolution = compositor.encoder_resolution();
 
             let mut video_encoders = vec![];
             for (idx, slice_consumer) in slice_consumers.into_iter().enumerate() {
@@ -140,6 +156,9 @@ fn begin_server_loop(
                 video_encoders.push(VideoEncoder::new(
                     &format!("Video encoder loop {}", idx),
                     settings.video.encoder.clone(),
+                    video_encoder_resolution,
+                    client_handshake_packet.fps,
+                    graphics.lock().device_ptr(),
                     slice_consumer,
                     video_packet_producer,
                 )?);
@@ -182,22 +201,6 @@ fn begin_server_loop(
                 }
                 Switch::Disabled => None,
             };
-
-            let (present_producer, present_consumer) = queue_channel_split();
-            let sync_handle_mutex = Arc::new(Mutex::new(()));
-
-            let mut compositor = Compositor::new(
-                graphics.clone(),
-                CompositorSettings {
-                    target_eye_width,
-                    target_eye_height,
-                    filter_type: settings.video.composition_filtering,
-                    ffr_desc: settings.video.foveated_rendering.clone().into_option(),
-                },
-                present_consumer,
-                sync_handle_mutex.clone(),
-                slice_producers,
-            )?;
 
             openvr_backend
                 .lock()
