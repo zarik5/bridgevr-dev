@@ -16,4 +16,3 @@ decoder = []
 
 [build-dependencies]
 bindgen = '*'
-cc = '*'

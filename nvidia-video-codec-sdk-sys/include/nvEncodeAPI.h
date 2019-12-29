@@ -130,11 +130,11 @@ typedef void* NV_ENC_CUSTREAM_PTR;          /**< Pointer to CUstream*/
 // =========================================================================================
 
 // {6BC82762-4E63-4ca4-AA85-1E50F321F6BF}
-static const GUID NV_ENC_CODEC_H264_GUID =
+const GUID NV_ENC_CODEC_H264_GUID =
 { 0x6bc82762, 0x4e63, 0x4ca4, { 0xaa, 0x85, 0x1e, 0x50, 0xf3, 0x21, 0xf6, 0xbf } };
 
 // {790CDC88-4522-4d7b-9425-BDA9975F7603}
-static const GUID NV_ENC_CODEC_HEVC_GUID = 
+const GUID NV_ENC_CODEC_HEVC_GUID = 
 { 0x790cdc88, 0x4522, 0x4d7b, { 0x94, 0x25, 0xbd, 0xa9, 0x97, 0x5f, 0x76, 0x3 } };
 
 
@@ -144,91 +144,91 @@ static const GUID NV_ENC_CODEC_HEVC_GUID =
 // =========================================================================================
 
 // {BFD6F8E7-233C-4341-8B3E-4818523803F4}
-static const GUID NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID = 
+const GUID NV_ENC_CODEC_PROFILE_AUTOSELECT_GUID = 
 { 0xbfd6f8e7, 0x233c, 0x4341, { 0x8b, 0x3e, 0x48, 0x18, 0x52, 0x38, 0x3, 0xf4 } };
 
 // {0727BCAA-78C4-4c83-8C2F-EF3DFF267C6A}
-static const GUID  NV_ENC_H264_PROFILE_BASELINE_GUID =
+const GUID  NV_ENC_H264_PROFILE_BASELINE_GUID =
 { 0x727bcaa, 0x78c4, 0x4c83, { 0x8c, 0x2f, 0xef, 0x3d, 0xff, 0x26, 0x7c, 0x6a } };
 
 // {60B5C1D4-67FE-4790-94D5-C4726D7B6E6D}
-static const GUID  NV_ENC_H264_PROFILE_MAIN_GUID =
+const GUID  NV_ENC_H264_PROFILE_MAIN_GUID =
 { 0x60b5c1d4, 0x67fe, 0x4790, { 0x94, 0xd5, 0xc4, 0x72, 0x6d, 0x7b, 0x6e, 0x6d } };
 
 // {E7CBC309-4F7A-4b89-AF2A-D537C92BE310}
-static const GUID NV_ENC_H264_PROFILE_HIGH_GUID =
+const GUID NV_ENC_H264_PROFILE_HIGH_GUID =
 { 0xe7cbc309, 0x4f7a, 0x4b89, { 0xaf, 0x2a, 0xd5, 0x37, 0xc9, 0x2b, 0xe3, 0x10 } };
 
 // {7AC663CB-A598-4960-B844-339B261A7D52}
-static const GUID  NV_ENC_H264_PROFILE_HIGH_444_GUID = 
+const GUID  NV_ENC_H264_PROFILE_HIGH_444_GUID = 
 { 0x7ac663cb, 0xa598, 0x4960, { 0xb8, 0x44, 0x33, 0x9b, 0x26, 0x1a, 0x7d, 0x52 } };
 
 // {40847BF5-33F7-4601-9084-E8FE3C1DB8B7}
-static const GUID NV_ENC_H264_PROFILE_STEREO_GUID =
+const GUID NV_ENC_H264_PROFILE_STEREO_GUID =
 { 0x40847bf5, 0x33f7, 0x4601, { 0x90, 0x84, 0xe8, 0xfe, 0x3c, 0x1d, 0xb8, 0xb7 } };
 
 // {CE788D20-AAA9-4318-92BB-AC7E858C8D36}
-static const GUID NV_ENC_H264_PROFILE_SVC_TEMPORAL_SCALABILTY =
+const GUID NV_ENC_H264_PROFILE_SVC_TEMPORAL_SCALABILTY =
 { 0xce788d20, 0xaaa9, 0x4318, { 0x92, 0xbb, 0xac, 0x7e, 0x85, 0x8c, 0x8d, 0x36 } };
 
 // {B405AFAC-F32B-417B-89C4-9ABEED3E5978}
-static const GUID NV_ENC_H264_PROFILE_PROGRESSIVE_HIGH_GUID = 
+const GUID NV_ENC_H264_PROFILE_PROGRESSIVE_HIGH_GUID = 
 { 0xb405afac, 0xf32b, 0x417b, { 0x89, 0xc4, 0x9a, 0xbe, 0xed, 0x3e, 0x59, 0x78 } };
 
 // {AEC1BD87-E85B-48f2-84C3-98BCA6285072}
-static const GUID NV_ENC_H264_PROFILE_CONSTRAINED_HIGH_GUID = 
+const GUID NV_ENC_H264_PROFILE_CONSTRAINED_HIGH_GUID = 
 { 0xaec1bd87, 0xe85b, 0x48f2, { 0x84, 0xc3, 0x98, 0xbc, 0xa6, 0x28, 0x50, 0x72 } };
 
 // {B514C39A-B55B-40fa-878F-F1253B4DFDEC}
-static const GUID NV_ENC_HEVC_PROFILE_MAIN_GUID = 
+const GUID NV_ENC_HEVC_PROFILE_MAIN_GUID = 
 { 0xb514c39a, 0xb55b, 0x40fa, { 0x87, 0x8f, 0xf1, 0x25, 0x3b, 0x4d, 0xfd, 0xec } };
 
 // {fa4d2b6c-3a5b-411a-8018-0a3f5e3c9be5}
-static const GUID NV_ENC_HEVC_PROFILE_MAIN10_GUID = 
+const GUID NV_ENC_HEVC_PROFILE_MAIN10_GUID = 
 { 0xfa4d2b6c, 0x3a5b, 0x411a, { 0x80, 0x18, 0x0a, 0x3f, 0x5e, 0x3c, 0x9b, 0xe5 } };
 
 // For HEVC Main 444 8 bit and HEVC Main 444 10 bit profiles only
 // {51ec32b5-1b4c-453c-9cbd-b616bd621341}
-static const GUID NV_ENC_HEVC_PROFILE_FREXT_GUID = 
+const GUID NV_ENC_HEVC_PROFILE_FREXT_GUID = 
 { 0x51ec32b5, 0x1b4c, 0x453c, { 0x9c, 0xbd, 0xb6, 0x16, 0xbd, 0x62, 0x13, 0x41 } };
 
 // =========================================================================================
 // *   Preset GUIDS supported by the NvEncodeAPI interface.
 // =========================================================================================
 // {B2DFB705-4EBD-4C49-9B5F-24A777D3E587}
-static const GUID NV_ENC_PRESET_DEFAULT_GUID =
+const GUID NV_ENC_PRESET_DEFAULT_GUID =
 { 0xb2dfb705, 0x4ebd, 0x4c49, { 0x9b, 0x5f, 0x24, 0xa7, 0x77, 0xd3, 0xe5, 0x87 } };
 
 // {60E4C59F-E846-4484-A56D-CD45BE9FDDF6}
-static const GUID NV_ENC_PRESET_HP_GUID =
+const GUID NV_ENC_PRESET_HP_GUID =
 { 0x60e4c59f, 0xe846, 0x4484, { 0xa5, 0x6d, 0xcd, 0x45, 0xbe, 0x9f, 0xdd, 0xf6 } };
 
 // {34DBA71D-A77B-4B8F-9C3E-B6D5DA24C012}
-static const GUID NV_ENC_PRESET_HQ_GUID =
+const GUID NV_ENC_PRESET_HQ_GUID =
 { 0x34dba71d, 0xa77b, 0x4b8f, { 0x9c, 0x3e, 0xb6, 0xd5, 0xda, 0x24, 0xc0, 0x12 } };
 
 // {82E3E450-BDBB-4e40-989C-82A90DF9EF32}
-static const GUID NV_ENC_PRESET_BD_GUID  = 
+const GUID NV_ENC_PRESET_BD_GUID  = 
 { 0x82e3e450, 0xbdbb, 0x4e40, { 0x98, 0x9c, 0x82, 0xa9, 0xd, 0xf9, 0xef, 0x32 } };
 
 // {49DF21C5-6DFA-4feb-9787-6ACC9EFFB726}
-static const GUID NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID  = 
+const GUID NV_ENC_PRESET_LOW_LATENCY_DEFAULT_GUID  = 
 { 0x49df21c5, 0x6dfa, 0x4feb, { 0x97, 0x87, 0x6a, 0xcc, 0x9e, 0xff, 0xb7, 0x26 } };
 
 // {C5F733B9-EA97-4cf9-BEC2-BF78A74FD105}
-static const GUID NV_ENC_PRESET_LOW_LATENCY_HQ_GUID  = 
+const GUID NV_ENC_PRESET_LOW_LATENCY_HQ_GUID  = 
 { 0xc5f733b9, 0xea97, 0x4cf9, { 0xbe, 0xc2, 0xbf, 0x78, 0xa7, 0x4f, 0xd1, 0x5 } };
 
 // {67082A44-4BAD-48FA-98EA-93056D150A58}
-static const GUID NV_ENC_PRESET_LOW_LATENCY_HP_GUID =
+const GUID NV_ENC_PRESET_LOW_LATENCY_HP_GUID =
 { 0x67082a44, 0x4bad, 0x48fa, { 0x98, 0xea, 0x93, 0x5, 0x6d, 0x15, 0xa, 0x58 } };
 
 // {D5BFB716-C604-44e7-9BB8-DEA5510FC3AC}
-static const GUID NV_ENC_PRESET_LOSSLESS_DEFAULT_GUID = 
+const GUID NV_ENC_PRESET_LOSSLESS_DEFAULT_GUID = 
 { 0xd5bfb716, 0xc604, 0x44e7, { 0x9b, 0xb8, 0xde, 0xa5, 0x51, 0xf, 0xc3, 0xac } };
 
 // {149998E7-2364-411d-82EF-179888093409}
-static const GUID NV_ENC_PRESET_LOSSLESS_HP_GUID = 
+const GUID NV_ENC_PRESET_LOSSLESS_HP_GUID = 
 { 0x149998e7, 0x2364, 0x411d, { 0x82, 0xef, 0x17, 0x98, 0x88, 0x9, 0x34, 0x9 } };
 
 /**

@@ -20,18 +20,11 @@ fn main() {
         .write(bindings_header_content.as_bytes())
         .expect("bindings");
 
-    cc::Build::new()
-        .cpp(true)
-        .file("src/bindings.cpp")
-        .flag("-Iinclude/")
-        .flag("-Isrc/")
-        .flag(&format!("-I{}", out_path.to_string_lossy()))
-        .compile("bindings");
-
     bindgen::builder()
         .clang_arg("-Isrc/")
         .clang_arg("-Iinclude/")
         .header(bindings_header_path.to_string_lossy())
+        .blacklist_item(".+_GUID")
         .default_enum_style(bindgen::EnumVariation::Consts)
         .prepend_enum_name(false)
         .derive_default(true)
