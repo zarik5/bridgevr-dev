@@ -15,31 +15,32 @@ vulkan = ['gfx-backend-vulkan', 'ash']
 metal = ['gfx-backend-metal']
 
 [dependencies]
-serde_json = '1.0.44'
-bincode = '1.2.1'
+parking_lot = '0.10.0' # Mutex
 bitflags = '1.2.1'
+backtrace = '0.3.40'
+safe-transmute = '0.10.1'
 log = '0.4.8'
-gfx-hal = '0.4.1'
-statrs = '0.12.0'
 serde = { version = '1.0.104', features = ['derive'] }
-cpal = { git = "https://github.com/RustAudio/cpal" }
-backtrace = "0.3.40"
-safe-transmute = "0.10.1"
-parking_lot = "0.10.0"
+serde_json = '1.0.44' # De/serialization for settings
+bincode = '1.2.1' # De/serialization for packets
+statrs = '0.12.0' # Statistical utlities
+gfx-hal = '0.4.1' # Graphics
+# ffmpeg = { git = 'https://github.com/meh/rust-ffmpeg' } # todo: use this if working
+# requires FFMPEG_DIR env var on windows
+ffmpeg-sys = { git = 'https://github.com/meh/rust-ffmpeg-sys' } # Video encoder
+cuda = { version = '0.4.0-pre.2', features = ['cuda_10_1'] } # Encoder interop for Nvidia
+cpal = '0.11.0' # Audio
 
-[target."cfg(any(target_os = \"linux\", target_os = \"android\", windows))".dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "android", windows))'.dependencies]
 # WARNING: any version change can create undefined behaviour
 gfx-backend-vulkan = { version = '0.4.0', optional = true }
 ash = {version = '0.29.0', optional = true}
 
-[target."cfg(windows)".dependencies]
+[target.'cfg(windows)'.dependencies]
 # WARNING: any version change can create undefined behaviour
 gfx-backend-dx11 = { version = '0.4.3', optional = true }
 winapi = { version = '0.3.8', optional = true }
 wio = { version = '0.2.2', optional = true }
 
-[target."cfg(target_os = \"macos\")".dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 gfx-backend-metal = { version = '0.4.2', optional = true }
-
-[build-dependencies]
-pkg-config = '0.3.17'

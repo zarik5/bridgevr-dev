@@ -7,8 +7,7 @@ edition = '2018'
 build = 'build.rs'
 
 [features]
-default = ['nvenc', 'dx11']
-nvenc = ['nvidia-video-codec-sdk-sys']
+default = ['vulkan']
 dx11 = ['bridgevr_common/dx11']
 vulkan = ['bridgevr_common/vulkan']
 metal = ['bridgevr_common/metal']
@@ -33,12 +32,10 @@ path = '../openvr-driver'
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # bridgevr_common = { path = '../bridgevr_common', features=['vulkan'], default-features=false }
-nvidia-video-codec-sdk-sys = { path = '../nvidia-video-codec-sdk-sys', features = ['encoder'], optional = true }
 gtk = '0.8.0'
 
 [target."cfg(windows)".dependencies]
 # bridgevr_common = { path = '../bridgevr_common', features=['dx11'], default-features=false }
-nvidia-video-codec-sdk-sys = { path = '../nvidia-video-codec-sdk-sys', features = ['encoder'], optional = true }
 msgbox = '0.4.0'
 
 [target."cfg(target_os = \"macos\")".dependencies]

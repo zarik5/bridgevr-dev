@@ -45,87 +45,53 @@ pub struct MotionDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum Preset {
-    HighPerformance,
-    Default,
-    HighQuality,
+pub enum FfmpegVideoEncoderType {
+    CudaNvenc,
+    Software,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct QP {
-    pub i: u32,
-    pub p: u32,
+pub enum FfmpegVideoDecoderType {
+    MediaCodec,
+    Software,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum FfmpegOptionValue {
+    String(String),
+    Int(i64),
+    Double(f64),
+    Rational { num: i32, den: i32 },
+    Binary(Vec<u8>),
+    ImageSize { width: i32, height: i32 },
+    VideoRate { num: i32, den: i32 },
+    ChannelLayout(i64),
+    Dictionary(Vec<(String, String)>),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum RateControlMode {
-    ConstantQP(Option<QP>),
-    VBR {
-        max_bitrate: Option<u32>,
-        initial_qp: Option<Switch<QP>>,
-        min_qp: Option<Switch<QP>>,
-        max_qp: Option<Switch<QP>>,
-        target_quality: Option<u8>,
-    },
-    CBR,
-    LowDelayCBR,
+pub struct FfmpegOption(pub String, pub FfmpegOptionValue);
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FfmpegVideoEncoderDesc {
+    pub encoder_type: FfmpegVideoEncoderType,
+    pub encoder_name: String,
+    pub context_options: Vec<FfmpegOption>,
+    pub priv_data_options: Vec<FfmpegOption>,
+    pub codec_open_options: Vec<(String, String)>,
+    pub frame_options: Vec<FfmpegOption>,
+    pub vendor_specific_context_options: Vec<(String, String)>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct AQ {
-    pub enable_spatial: bool,
-    pub enable_temporal: bool,
-    pub strength: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct RateControl {
-    pub mode: Option<RateControlMode>,
-    pub bitrate_k: Option<u32>,
-    pub vbv_buffer_size: Option<u32>,
-    pub vbv_initial_delay: Option<u32>,
-    pub aq: Option<AQ>,
-    pub zero_latency: Option<bool>,
-    pub enable_non_ref_p: Option<bool>,
-    pub strict_gop_target: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct IntraRefresh {
-    pub period: u32,
-    pub count: u32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
-pub enum NvSliceMode {
-    MBs { mb_per_slice: u32 },
-    Bytes { max_bytes_per_slice: u32 },
-    MBRows { num_rows: u32 },
-    Slices { num_slices: u32 },
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub enum ChromaFormat {
-    YUV420,
-    YUV444,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct NvCodecH264 {
-    pub preset: Preset,
-    pub rate_control: RateControl,
-    pub hierarchical_p_frames: Option<bool>,
-    pub intra_refresh: Option<Switch<IntraRefresh>>,
-    pub level: Option<u32>,
-    pub disable_deblocking_filter_idc: Option<bool>,
-    pub num_temporal_layers: Option<u32>,
-    pub adaptive_transform_mode: Option<u32>,
-    pub entropy_coding_mode: Option<u32>,
-    pub max_num_ref_frames: Option<u32>,
-    pub slice_mode: Option<NvSliceMode>,
-    pub chroma_format: Option<ChromaFormat>,
-    pub max_temporal_layers: Option<u32>,
+pub struct FfmpegVideoDecoderDesc {
+    pub encoder_type: FfmpegVideoDecoderType,
+    pub decoder_name: String,
+    pub context_options: Vec<FfmpegOption>,
+    pub priv_data_options: Vec<FfmpegOption>,
+    pub codec_open_options: Vec<(String, String)>,
+    pub frame_options: Vec<FfmpegOption>,
+    pub vendor_specific_context_options: Vec<(String, String)>
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -167,16 +133,13 @@ pub struct ConnectionDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
 pub enum VideoEncoderDesc {
-    Gstreamer(String),
-    Nvidia(NvCodecH264)
+    Ffmpeg(FfmpegVideoEncoderDesc),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
 pub enum VideoDecoderDesc {
-    Gstreamer(String),
+    Ffmpeg(FfmpegVideoDecoderDesc),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]

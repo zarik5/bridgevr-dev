@@ -1,4 +1,4 @@
-use crate::{compositor::*, nvenc::*};
+use crate::{compositor::*};
 use bridgevr_common::{
     data::VideoEncoderDesc,
     ring_channel::*,
@@ -34,42 +34,43 @@ impl VideoEncoder {
         mut frame_consumer: Consumer<FrameSlice>,
         mut packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {
-        let encode_callback = match settings {
-            VideoEncoderDesc::Nvidia(nv_codec) => {
-                let encoder =
-                    NvidiaEncoder::new(graphics_device_ptr, resolution, frame_rate, nv_codec)?;
+        // let encode_callback = match settings {
+        //     VideoEncoderDesc::Nvidia(nv_codec) => {
+        //         let encoder =
+        //             NvidiaEncoder::new(graphics_device_ptr, resolution, frame_rate, nv_codec)?;
 
-                move |texture, force_idr| encoder.encode(force_idr, texture)
-            }
-            VideoEncoderDesc::Gstreamer(pipeline_str) => todo!(),
-        };
+        //         move |texture, force_idr| encoder.encode(force_idr, texture)
+        //     }
+        //     VideoEncoderDesc::Gstreamer(pipeline_str) => todo!(),
+        // };
 
-        let thread_loop = thread_loop::spawn(thread_name, move || {
-            let mut maybe_video_packet = None;
-            frame_consumer
-                .consume(TIMEOUT, |frame_slice| {
-                    maybe_video_packet =
-                        encode_callback(frame_slice.texture.clone(), frame_slice.force_idr)
-                            .map_err(|e| debug!("{}", e))
-                            .ok();
-                    Ok(())
-                })
-                .map_err(|e| debug!("{:?}", e))
-                .ok();
+        // let thread_loop = thread_loop::spawn(thread_name, move || {
+        //     let mut maybe_video_packet = None;
+        //     frame_consumer
+        //         .consume(TIMEOUT, |frame_slice| {
+        //             maybe_video_packet =
+        //                 encode_callback(frame_slice.texture.clone(), frame_slice.force_idr)
+        //                     .map_err(|e| debug!("{}", e))
+        //                     .ok();
+        //             Ok(())
+        //         })
+        //         .map_err(|e| debug!("{:?}", e))
+        //         .ok();
 
-            if let Some(video_packet) = maybe_video_packet {
-                packet_producer
-                    .fill(TIMEOUT, |sender_data| {
-                        sender_data.packet = video_packet;
-                        // todo fill other fields
-                        Ok(())
-                    })
-                    .map_err(|e| debug!("{:?}", e))
-                    .ok();
-            }
-        })?;
+        //     if let Some(video_packet) = maybe_video_packet {
+        //         packet_producer
+        //             .fill(TIMEOUT, |sender_data| {
+        //                 sender_data.packet = video_packet;
+        //                 // todo fill other fields
+        //                 Ok(())
+        //             })
+        //             .map_err(|e| debug!("{:?}", e))
+        //             .ok();
+        //     }
+        // })?;
 
-        Ok(Self { thread_loop })
+        // Ok(Self { thread_loop })
+        todo!()
     }
 
     pub fn request_stop(&mut self) {

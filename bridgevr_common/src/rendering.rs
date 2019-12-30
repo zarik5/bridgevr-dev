@@ -406,7 +406,7 @@ impl Texture {
 
     #[cfg(feature = "vulkan")]
     pub fn from_handle(handle: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
-        Err("Cannot create image from handle")
+        trace_str!("Cannot create image from handle")
     }
 
     #[cfg(feature = "vulkan")]
