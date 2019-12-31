@@ -743,7 +743,7 @@ impl OpenvrBackend {
             *self.hmd_context.sync_handle_mutex.lock() = Some(sync_handle_mutex);
             *self.haptic_callback.lock() = Some(Box::new(haptic_callback));
 
-            // todo: notify settings changes to openvr
+            // todo: notify settings changes to openvr using properties
         }
     }
 

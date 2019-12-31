@@ -215,7 +215,6 @@ impl AudioPlayer {
                         buffer: UnknownTypeOutputBuffer::F32(mut samples),
                     } => {
                         let mut sample_idx = 0;
-                        // todo: optimize code?
                         while sample_idx < samples.len() {
                             let samples_to_copy = min(samples.len(), sample_buffer.len());
                             samples[sample_idx..(sample_idx + samples_to_copy)]

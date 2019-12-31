@@ -280,7 +280,7 @@ impl UniformBuffer {
         })
     }
 
-    pub fn write<T: 'static>(&self, data: &T) -> StrResult<()> {
+    pub fn write<T: 'static>(&self, data: &T) -> StrResult {
         // Cannot check this at compilation time: UniformBuffer cannot have type parameters because
         // I want multiple UniformBuffer with different struct types in the same operation desc vec.
         debug_assert_eq!(TypeId::of::<T>(), self.struct_type);
@@ -441,6 +441,14 @@ impl Texture {
 
     #[cfg(feature = "dx11")]
     pub fn as_handle(&self) -> u64 {
+        todo!();
+    }
+
+    pub fn read(&self) -> StrResult<Vec<u8>> {
+        todo!();
+    }
+
+    pub fn write(&self, data: Vec<u8>) -> StrResult {
         todo!();
     }
 }
@@ -633,7 +641,7 @@ impl OperationBuffer {
         //     },
         // ), "Framebuffer");
 
-        panic!();
+        todo!();
 
         // Self {
         //     graphics_al,

@@ -1,4 +1,4 @@
-pub type StrResult<T> = std::result::Result<T, String>;
+pub type StrResult<T = ()> = Result<T, String>;
 
 fn default_show_error_fn(_: &str) {}
 pub static mut _SHOW_ERROR_CB: fn(&str) = default_show_error_fn;

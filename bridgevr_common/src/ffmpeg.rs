@@ -3,7 +3,7 @@
 use crate::{data::*, rendering::*, *};
 use cuda::{driver::*, ffi::cuda::*, runtime::*};
 use ffmpeg_sys::*;
-use std::{ffi::CString, mem::transmute, os::raw::*, ptr::null_mut, sync::Arc};
+use std::{ffi::CString, mem, os::raw::*, ptr::null_mut, sync::Arc};
 
 //https://stackoverflow.com/questions/49862610/opengl-to-ffmpeg-encode
 // convert both vulkan and directx texures to cuda array and then copy to ffmpeg cuda array
@@ -72,13 +72,13 @@ fn alloc_and_fill_av_dict(entries: Vec<(String, String)>) -> StrResult<*mut AVDi
             "Error while setting dict entry {:?}",
             (key, value)
         )?;
-        // todo: deallocate dict if error
+        // todo: deallocate dict if error?
     }
 
     Ok(dict_ptr)
 }
 
-fn set_options(class_ptr: *mut AVClass, options: Vec<FfmpegOption>) -> StrResult<()> {
+fn set_options(class_ptr: *mut AVClass, options: Vec<FfmpegOption>) -> StrResult {
     let class_ptr = class_ptr as _;
     for FfmpegOption(name, value) in options {
         let name_c_string = trace_err!(CString::new(name))?;
@@ -143,31 +143,97 @@ fn set_options(class_ptr: *mut AVClass, options: Vec<FfmpegOption>) -> StrResult
 }
 
 pub enum FfmpegResultOk {
-    Some,
-    Again,
-    EOF,
+    SomeOutput,
+    NoOutput,
 }
 
 pub struct FfmpegFrame {
+    pub frame_id: usize,
     pub texture: Arc<Texture>,
     av_frame_id: usize,
 }
 
 pub struct FfmpegPacket {
-    pub frame_id: u64,
+    pub frame_id: usize,
     pub data: Vec<u8>,
+    pub data_offset: usize,
     pub size: usize,
-    av_packet_id: usize,
+    av_packet: AVPacket,
+}
+
+struct FfmpegVideoCoder {
+    context_ptr: *mut AVCodecContext,
+    av_frame_ptrs: Vec<*mut AVFrame>,
+    frame_options: Vec<FfmpegOption>,
+    resolution: (u32, u32),
+}
+
+unsafe impl Send for FfmpegVideoCoder {}
+unsafe impl Sync for FfmpegVideoCoder {}
+
+impl FfmpegVideoCoder {
+    fn create_packets(
+        &mut self,
+        count: usize,
+        max_size: usize,
+        data_offset: usize,
+    ) -> Vec<FfmpegPacket> {
+        let mut packets = vec![];
+        for _ in 0..count {
+            let data = vec![0; max_size];
+            let mut av_packet = unsafe { mem::zeroed() };
+            unsafe { av_init_packet(&mut av_packet) };
+
+            packets.push(FfmpegPacket {
+                frame_id: 0,
+                data,
+                data_offset,
+                size: 0,
+                av_packet,
+            });
+        }
+        packets
+    }
+
+    fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
+        let mut frames = vec![];
+        let (width, height) = self.resolution;
+        for texture in textures {
+            let av_frame_ptr = trace_null_ptr!(av_frame_alloc())?;
+            unsafe {
+                (*av_frame_ptr).width = width as _;
+                (*av_frame_ptr).height = height as _;
+                (*av_frame_ptr).format = mem::transmute(PIXEL_FORMAT);
+            }
+            set_options(av_frame_ptr as _, self.frame_options.clone())?;
+            // trace_av_err!(av_frame_get_buffer(av_frame_ptr, number_of_buffers as _))?;
+
+            frames.push(FfmpegFrame {
+                frame_id: 0,
+                texture,
+                av_frame_id: av_frame_ptr as _,
+            });
+            self.av_frame_ptrs.push(av_frame_ptr);
+        }
+        Ok(frames)
+    }
+}
+
+impl Drop for FfmpegVideoCoder {
+    fn drop(&mut self) {
+        unsafe {
+            avcodec_free_context(&mut self.context_ptr);
+            for p in &mut self.av_frame_ptrs {
+                av_frame_free(p);
+            }
+        }
+    }
 }
 
 pub struct FfmpegVideoEncoder {
-    context_ptr: *mut AVCodecContext,
-    frame_ptrs: Vec<*mut AVFrame>,
-    packet_ptrs: Vec<*mut AVPacket>,
+    interop_type: FfmpegVideoEncoderInteropType,
+    video_coder: FfmpegVideoCoder,
 }
-
-unsafe impl Send for FfmpegVideoEncoder {}
-unsafe impl Sync for FfmpegVideoEncoder {}
 
 impl FfmpegVideoEncoder {
     pub fn new(
@@ -204,21 +270,8 @@ impl FfmpegVideoEncoder {
         // todo: read encoder set opts
         unsafe { av_dict_free(&mut opts_ptr) };
 
-        // let packet_ptr = trace_null_ptr!(av_packet_alloc())?;
-
-        // let frame_ptr = trace_null_ptr!(av_frame_alloc())?;
-        // unsafe {
-        //     // AVPixelFormat is repr(c), so it can be transmuted
-        //     (*frame_ptr).format = transmute((*context_ptr).pix_fmt);
-        //     (*frame_ptr).width = (*context_ptr).width;
-        //     (*frame_ptr).height = (*context_ptr).height;
-        // }
-        // set_options(frame_ptr as _, video_encoder_desc.frame_options)?;
-
-        // trace_av_err!(av_frame_get_buffer(frame_ptr, number_of_buffers as _))?;
-
         //https://stackoverflow.com/questions/49862610/opengl-to-ffmpeg-encode
-        if let FfmpegVideoEncoderType::CudaNvenc = video_encoder_desc.encoder_type {
+        if let FfmpegVideoEncoderInteropType::CudaNvenc = video_encoder_desc.interop_type {
             trace_err!(cuda_init())?;
             let cu_device = trace_err!(CudaDevice::get_current())?;
             let cu_device_props = trace_err!(cu_device.get_properties())?;
@@ -259,37 +312,85 @@ impl FfmpegVideoEncoder {
         }
 
         Ok(FfmpegVideoEncoder {
-            context_ptr,
-            frame_ptrs: vec![],
-            packet_ptrs: vec![],
+            interop_type: video_encoder_desc.interop_type,
+            video_coder: FfmpegVideoCoder {
+                context_ptr,
+                av_frame_ptrs: vec![],
+                frame_options: video_encoder_desc.frame_options,
+                resolution: (width, height),
+            },
         })
     }
 
-    pub fn encode(&self) {}
-}
+    pub fn create_packets(
+        &mut self,
+        count: usize,
+        max_size: usize,
+        data_offset: usize,
+    ) -> Vec<FfmpegPacket> {
+        self.video_coder
+            .create_packets(count, max_size, data_offset)
+    }
 
-impl Drop for FfmpegVideoEncoder {
-    fn drop(&mut self) {
-        unsafe {
-            avcodec_free_context(&mut self.context_ptr);
-            for p in &mut self.frame_ptrs {
-                av_frame_free(p);
+    pub fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
+        self.video_coder.create_frames(textures)
+    }
+
+    pub fn submit_frame(&self, frame: &FfmpegFrame) -> StrResult {
+        let av_frame_ptr = frame.av_frame_id as *mut AVFrame;
+        unsafe { (*av_frame_ptr).pts = frame.frame_id as _ };
+
+        match self.interop_type {
+            FfmpegVideoEncoderInteropType::CudaNvenc => todo!(),
+            FfmpegVideoEncoderInteropType::SoftwareRGB => {
+                trace_av_err!(unsafe { av_frame_make_writable(av_frame_ptr) })?;
+
+                let frame_data = frame.texture.read()?;
+
+                // todo: check color channel order
+                for i in 0..frame_data.len() / 4 {
+                    for c in 0..3 {
+                        unsafe { *(*av_frame_ptr).data[c].add(i) = frame_data[i * 4 + c] }
+                    }
+                }
             }
-            for p in &mut self.packet_ptrs {
-                av_packet_free(p);
-            }
+        }
+
+        trace_av_err!(unsafe { avcodec_send_frame(self.video_coder.context_ptr, av_frame_ptr) })
+    }
+
+    pub fn receive_packet(&mut self, packet: &mut FfmpegPacket) -> StrResult<FfmpegResultOk> {
+        let res =
+            unsafe { avcodec_receive_packet(self.video_coder.context_ptr, &mut packet.av_packet) };
+        if res == AVERROR_EOF || res == AVERROR(EAGAIN) {
+            Ok(FfmpegResultOk::NoOutput)
+        } else {
+            trace_av_err!(res)?;
+
+            // todo: try to avoid copy?
+            // I could send the packet where I overwrite the first 8 bytes for the packet
+            // index, then I send another packet with the same index, the header and
+            // the overwritten 8 bytes.
+            packet.size = packet.av_packet.size as _;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    packet.av_packet.data,
+                    &mut packet.data[packet.data_offset],
+                    packet.size,
+                )
+            };
+
+            packet.frame_id = packet.av_packet.pts as _;
+
+            unsafe { av_packet_unref(&mut packet.av_packet) }
+            Ok(FfmpegResultOk::SomeOutput)
         }
     }
 }
 
 pub struct FfmpegVideoDecoder {
-    context_ptr: *mut AVCodecContext,
-    frame_ptrs: Vec<*mut AVFrame>,
-    packet_ptrs: Vec<*mut AVPacket>,
+    video_coder: FfmpegVideoCoder,
 }
-
-unsafe impl Send for FfmpegVideoDecoder {}
-unsafe impl Sync for FfmpegVideoDecoder {}
 
 impl FfmpegVideoDecoder {
     pub fn new(
@@ -304,6 +405,7 @@ impl FfmpegVideoDecoder {
         unsafe {
             (*context_ptr).width = width as _;
             (*context_ptr).height = height as _;
+            (*context_ptr).pix_fmt = PIXEL_FORMAT;
         }
         set_options(context_ptr as _, video_decoder_desc.context_options)?;
         set_options(context_ptr as _, video_decoder_desc.priv_data_options)?;
@@ -312,72 +414,60 @@ impl FfmpegVideoDecoder {
         trace_av_err!(unsafe { avcodec_open2(context_ptr, codec_ptr, &mut opts_ptr) })?;
         unsafe { av_dict_free(&mut opts_ptr) };
 
-        let frame_ptr = trace_null_ptr!(av_frame_alloc())?;
-        unsafe {
-            (*frame_ptr).format = transmute((*context_ptr).pix_fmt);
-            (*frame_ptr).width = (*context_ptr).width;
-            (*frame_ptr).height = (*context_ptr).height;
-        }
-        set_options(frame_ptr as _, video_decoder_desc.frame_options)?;
-
         Ok(FfmpegVideoDecoder {
-            context_ptr,
-            frame_ptrs: vec![],
-            packet_ptrs: vec![],
+            video_coder: FfmpegVideoCoder {
+                context_ptr,
+                av_frame_ptrs: vec![],
+                frame_options: video_decoder_desc.frame_options,
+                resolution: (width, height),
+            },
         })
     }
 
-    pub fn create_packets(&mut self, count: usize, size: usize) -> StrResult<Vec<FfmpegPacket>> {
-        let mut packets = vec![];
-        for _ in 0..count {
-            let data = vec![0; size];
-            let packet_ptr = trace_null_ptr!(av_packet_alloc())?;
-            unsafe { (*packet_ptr).data = data.as_ptr() as _ };
-            // `size` field is set before encoding
+    pub fn create_packets(
+        &mut self,
+        count: usize,
+        max_size: usize,
+        data_offset: usize,
+    ) -> Vec<FfmpegPacket> {
+        self.video_coder
+            .create_packets(count, max_size, data_offset)
+    }
 
-            packets.push(FfmpegPacket {
-                frame_id: 0,
-                data,
-                size: 0,
-                av_packet_id: packet_ptr as _,
-            });
-            // Save pointer to deallocate packet when FfmpegVideoDecoder drops
-            self.packet_ptrs.push(packet_ptr);
-        }
-        Ok(packets)
+    pub fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
+        self.video_coder.create_frames(textures)
     }
 
     pub fn decode(
         &mut self,
-        packet: Option<&FfmpegPacket>,
-        frame: &FfmpegFrame,
+        packet: &mut FfmpegPacket,
+        frame: &mut FfmpegFrame,
     ) -> StrResult<FfmpegResultOk> {
-        if let Some(packet) = packet {
-            let packet_ptr = packet.av_packet_id as *mut AVPacket;
-            unsafe { (*packet_ptr).size = packet.size as _ }
-            trace_av_err!(unsafe { avcodec_send_packet(self.context_ptr, packet_ptr) })?;
-        }
+        packet.av_packet.data = &mut packet.data[packet.data_offset];
+        packet.av_packet.size = packet.size as _;
+        packet.av_packet.pts = packet.frame_id as _;
+        trace_av_err!(unsafe {
+            avcodec_send_packet(self.video_coder.context_ptr, &packet.av_packet)
+        })?;
 
-        let res = unsafe { avcodec_receive_frame(self.context_ptr, frame.av_frame_id as _) };
-        if res == AVERROR(EAGAIN) {
-            Ok(FfmpegResultOk::Again)
-        } else if res == AVERROR_EOF {
-            Ok(FfmpegResultOk::EOF)
-        } else {
-            trace_av_err!(res).map(|_| FfmpegResultOk::Some)
-        }
-    }
-}
+        let av_frame_ptr = frame.av_frame_id as _;
 
-impl Drop for FfmpegVideoDecoder {
-    fn drop(&mut self) {
-        unsafe {
-            avcodec_free_context(&mut self.context_ptr);
-            for p in &mut self.frame_ptrs {
-                av_frame_free(p);
-            }
-            for p in &mut self.packet_ptrs {
-                av_packet_free(p);
+        let mut filled = false;
+        loop {
+            let res = unsafe { avcodec_receive_frame(self.video_coder.context_ptr, av_frame_ptr) };
+            if res == AVERROR_EOF || res == AVERROR(EAGAIN) {
+                if filled {
+                    // todo: fill frame
+
+                    frame.frame_id = unsafe { (*av_frame_ptr).pts } as _;
+
+                    break Ok(FfmpegResultOk::SomeOutput);
+                } else {
+                    break Ok(FfmpegResultOk::NoOutput);
+                }
+            } else {
+                trace_av_err!(res)?;
+                filled = true;
             }
         }
     }

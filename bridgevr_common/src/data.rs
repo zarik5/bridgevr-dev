@@ -45,15 +45,15 @@ pub struct MotionDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum FfmpegVideoEncoderType {
+pub enum FfmpegVideoEncoderInteropType {
     CudaNvenc,
-    Software,
+    SoftwareRGB, // e.g. libx264rgb is supported but libx264 isn't
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum FfmpegVideoDecoderType {
+pub enum FfmpegVideoDecoderInteropType {
     MediaCodec,
-    Software,
+    D3D11VA,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -74,7 +74,7 @@ pub struct FfmpegOption(pub String, pub FfmpegOptionValue);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FfmpegVideoEncoderDesc {
-    pub encoder_type: FfmpegVideoEncoderType,
+    pub interop_type: FfmpegVideoEncoderInteropType,
     pub encoder_name: String,
     pub context_options: Vec<FfmpegOption>,
     pub priv_data_options: Vec<FfmpegOption>,
@@ -85,7 +85,7 @@ pub struct FfmpegVideoEncoderDesc {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FfmpegVideoDecoderDesc {
-    pub encoder_type: FfmpegVideoDecoderType,
+    pub interop_type: FfmpegVideoDecoderInteropType,
     pub decoder_name: String,
     pub context_options: Vec<FfmpegOption>,
     pub priv_data_options: Vec<FfmpegOption>,
@@ -440,7 +440,7 @@ impl SessionDescLoader {
         &mut self.session_desc
     }
 
-    pub fn save(&self) -> StrResult<()> {
+    pub fn save(&self) -> StrResult {
         const TRACE_CONTEXT: &str = "Session";
         trace_err!(fs::write(
             &self.path,

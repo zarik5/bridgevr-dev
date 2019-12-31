@@ -41,7 +41,7 @@ fn begin_server_loop(
     shutdown_signal_sender: Sender<ShutdownSignal>,
     shutdown_signal_receiver: Receiver<ShutdownSignal>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
-) -> StrResult<()> {
+) -> StrResult {
     let timeout = Duration::from_secs(
         get_settings()
             .map(|s| s.openvr.timeout_seconds)

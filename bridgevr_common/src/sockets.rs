@@ -31,7 +31,7 @@ pub fn serialize_indexed_header_into<H: Serialize>(
     buffer: &mut Vec<u8>,
     index: u64,
     header: &H,
-) -> StrResult<()> {
+) -> StrResult {
     // first 8 bytes are the index
     buffer[..8].copy_from_slice(&index.to_le_bytes());
     trace_err!(bincode::serialize_into(&mut buffer[8..], header))
@@ -122,7 +122,6 @@ pub struct ConnectionManager<SM> {
 
     // Vec<u8> implements Write. Written data is appended.
     // Must be cleared before sending new data.
-    // todo: remove Arc<Mutex<>>?
     send_message_buffer: Arc<Mutex<Vec<u8>>>,
 
     //this phantom data forces a ConnectionManager instance to always send the same type of data.
@@ -273,7 +272,7 @@ impl<SM> ConnectionManager<SM> {
         thread_name: &str,
         port: u16,
         mut buffer_consumer: Consumer<SenderData>,
-    ) -> StrResult<()> {
+    ) -> StrResult {
         let socket_data_ref = self.buffer_sockets.entry(port).or_insert(SocketData {
             socket: Arc::new(create_udp_socket(self.peer_ip, port)?),
             sender_thread: None,
@@ -306,7 +305,7 @@ impl<SM> ConnectionManager<SM> {
         thread_name: &str,
         port: u16,
         mut buffer_producer: Producer<ReceiverData<M>, u64>,
-    ) -> StrResult<()> {
+    ) -> StrResult {
         let socket_data_ref = self.buffer_sockets.entry(port).or_insert(SocketData {
             socket: Arc::new(create_udp_socket(self.peer_ip, port)?),
             sender_thread: None,
@@ -355,7 +354,7 @@ impl<SM> ConnectionManager<SM> {
 }
 
 impl<SM: Serialize> ConnectionManager<SM> {
-    pub fn send_message_udp(&self, packet: &SM) -> StrResult<()> {
+    pub fn send_message_udp(&self, packet: &SM) -> StrResult {
         // reuse same buffer to avoid unnecessary reallocations
         let mut send_message_buffer = self.send_message_buffer.lock();
         send_message_buffer.clear();
@@ -372,7 +371,7 @@ impl<SM: Serialize> ConnectionManager<SM> {
         .map(|_| ())
     }
 
-    pub fn send_message_tcp(&mut self, packet: &SM) -> StrResult<()> {
+    pub fn send_message_tcp(&mut self, packet: &SM) -> StrResult {
         trace_err!(
             bincode::serialize_into(&*self.tcp_message_socket, packet),
             "TCP send error"

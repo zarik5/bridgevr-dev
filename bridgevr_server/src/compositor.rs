@@ -99,7 +99,7 @@ impl Graphics {
         Ok((id, handles))
     }
 
-    pub fn destroy_swap_texture_set(&mut self, id: usize) -> StrResult<()> {
+    pub fn destroy_swap_texture_set(&mut self, id: usize) -> StrResult {
         if let Some(handles) = self.swap_texture_handle_sets.remove(&id) {
             for handle in handles.iter() {
                 self.swap_textures.remove(handle);
@@ -179,12 +179,9 @@ impl Compositor {
         let (compressed_eye_width, compressed_eye_height) = compressed_eye_resolution;
         let compressed_frame_resolution = (compressed_eye_width * 2, compressed_eye_height);
 
-        let slices_desc = slices_desc_from_count(
-            slice_producers.len(),
-            compressed_frame_resolution,
-        );
-        let encoder_resolution =
-            aligned_resolution(slices_desc.single_resolution);
+        let slices_desc =
+            slices_desc_from_count(slice_producers.len(), compressed_frame_resolution);
+        let encoder_resolution = aligned_resolution(slices_desc.single_resolution);
 
         for (idx, prod) in slice_producers.iter_mut().enumerate() {
             let slice_texture = Arc::new(Texture::new(
