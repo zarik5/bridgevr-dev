@@ -44,16 +44,25 @@ pub struct MotionDesc {
     pub angular_velocity: [f32; 3],
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub enum FfmpegVideoEncoderInteropType {
-    CudaNvenc,
-    SoftwareRGB, // e.g. libx264rgb is supported but libx264 isn't
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub enum FfmpegVideoEncoderType {
+    #[cfg(target_os = "linux")]
+    CUDA, // Linux Nvidia
+    // vulkan soon?   // Linux AMD
+    // I excluded VAAPI because there are no Rust libraries
+    #[cfg(windows)]
+    D3D11VA, // Windows
+
+    #[cfg(target_os = "macos")]
+    VideoToolbox, // macOS
+
+    Software, // All (for testing)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum FfmpegVideoDecoderInteropType {
-    MediaCodec,
-    D3D11VA,
+pub enum FfmpegVideoDecoderType {
+    MediaCodec, // Android
+    D3D11VA,    // Windows
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -74,24 +83,26 @@ pub struct FfmpegOption(pub String, pub FfmpegOptionValue);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FfmpegVideoEncoderDesc {
-    pub interop_type: FfmpegVideoEncoderInteropType,
+    pub encoder_type: FfmpegVideoEncoderType,
     pub encoder_name: String,
     pub context_options: Vec<FfmpegOption>,
     pub priv_data_options: Vec<FfmpegOption>,
     pub codec_open_options: Vec<(String, String)>,
     pub frame_options: Vec<FfmpegOption>,
-    pub vendor_specific_context_options: Vec<(String, String)>
+    pub vendor_specific_context_options: Vec<(String, String)>,
+    pub hw_frames_context_options: Vec<FfmpegOption>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FfmpegVideoDecoderDesc {
-    pub interop_type: FfmpegVideoDecoderInteropType,
+    pub decoder_type: FfmpegVideoDecoderType,
     pub decoder_name: String,
     pub context_options: Vec<FfmpegOption>,
     pub priv_data_options: Vec<FfmpegOption>,
     pub codec_open_options: Vec<(String, String)>,
     pub frame_options: Vec<FfmpegOption>,
-    pub vendor_specific_context_options: Vec<(String, String)>
+    pub vendor_specific_context_options: Vec<(String, String)>,
+    pub hw_frames_context_options: Vec<FfmpegOption>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]

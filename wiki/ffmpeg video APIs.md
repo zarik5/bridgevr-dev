@@ -1,6 +1,6 @@
 # To be Implemented
 
-HWAccel APIs with hardware i/o:
+## HWAccel APIs with hardware i/o
 
 * VDPAU (linux): Nvidia (decoder), AMD (decoder)
 * VAAPI (linux): AMD (encoder + decoder), Intel (encoder), Nvidia (decoder)
@@ -11,17 +11,29 @@ HWAccel APIs with hardware i/o:
 * libmfx(win + linux): Intel (encoder + decoder)
 * VCE(AMF)(win + linux): AMD (encoder)
 
-Selected encoders:
+## Supported formats
 
-* Win10/Nvidia: h264_nvenc, AV_HWDEVICE_TYPE_CUDA
-* Win7/Nvidia: h264_nvenc, AV_HWDEVICE_TYPE_CUDA
-* Linux/Nvidia: h264_nvenc, AV_HWDEVICE_TYPE_CUDA
-* Win10/AMD: h264_amf, AV_HWDEVICE_TYPE_ ?
-* Win7/AMD: h264_amf, AV_HWDEVICE_TYPE_ ?
-* Linux/AMD: h264_vaapi/h264_amf, AV_HWDEVICE_TYPE_VAAPI
-* macOS: h264_videotoolbox, AV_HWDEVICE_TYPE_VIDEOTOOLBOX
+### Encoder
 
-Selected decoders:
+* libx264: AV_PIX_FMT_YUV420P, AV_PIX_FMT_BGR0, AV_PIX_FMT_RGB24, AV_PIX_FMT_NV12, ...
+* NVENC: AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_0RGB32, AV_PIX_FMT_0BGR32, AV_PIX_FMT_CUDA, AV_PIX_FMT_D3D11, ...
+* AMF: AV_PIX_FMT_NV12, AV_PIX_FMT_YUV420P, AV_PIX_FMT_D3D11, AV_PIX_FMT_BGR0, AV_PIX_FMT_RGB0, AV_PIX_FMT_YUYV422, ..., vulkan soon?
+* VideoToolbox: AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_VIDEOTOOLBOX
 
-* Win: D3D11VA
-* Android: MediaCodec
+Encoder common sw: AV_PIX_FMT_NV12 (or AV_PIX_FMT_YUV420P if no macos)
+Encoder hw windows: AV_PIX_FMT_D3D11
+Encoder hw linux: AV_PIX_FMT_CUDA (NVENC)
+Encoder hw macos: AV_PIX_FMT_VIDEOTOOLBOX,
+
+### Decoder
+
+* MediaCodec: AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12,
+* D3D11VA: AV_PIX_FMT_NV12, AV_PIX_FMT_P010, AV_PIX_FMT_YUV420P
+
+Decoder common sw: AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12
+
+## Supported backends
+
+* AMF: AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2, vulkan soon?
+* NVENC: AV_HWDEVICE_TYPE_CUDA, AV_HWDEVICE_TYPE_D3D11VA
+* VideoToolbox: AV_HWDEVICE_TYPE_VIDEOTOOLBOX

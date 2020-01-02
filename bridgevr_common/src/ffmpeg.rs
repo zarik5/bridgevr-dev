@@ -3,14 +3,32 @@
 use crate::{data::*, rendering::*, *};
 use cuda::{driver::*, ffi::cuda::*, runtime::*};
 use ffmpeg_sys::*;
-use std::{ffi::CString, mem, os::raw::*, ptr::null_mut, sync::Arc};
+use std::{
+    ffi::{CStr, CString},
+    mem,
+    os::raw::*,
+    ptr::*,
+    sync::Arc,
+};
+
+//https://ffmpeg.org/doxygen/trunk/hwcontext_8h.html
+
+//https://www.phoronix.com/scan.php?page=news_item&px=FFmpeg-AMD-AMF-Vulkan
+
+//https://stackoverflow.com/questions/50693934/different-h264-encoders-in-ffmpeg
 
 //https://stackoverflow.com/questions/49862610/opengl-to-ffmpeg-encode
 // convert both vulkan and directx texures to cuda array and then copy to ffmpeg cuda array
 
 const TRACE_CONTEXT: &str = "FFmpeg";
 
-const PIXEL_FORMAT: AVPixelFormat = AV_PIX_FMT_RGB32;
+// const SOFTWARE_FORMAT: AVPixelFormat = AVPixelFormat::AV_PIX_FMT_BGR24;
+// // or AV_PIX_FMT_BGR0 or AV_PIX_FMT_RGB24 for libx264rgb, AV_PIX_FMT_RGB32
+
+// const CUDA_FORMAT: AVPixelFormat = AV_PIX_FMT_0BGR32; //AV_PIX_FMT_RGB32;
+
+const SW_FORMAT: AVPixelFormat = AVPixelFormat::AV_PIX_FMT_NV12;
+const FRAME_BUFFER_SIZE_ALIGNMENT: i32 = 32;
 
 macro_rules! trace_av_err {
     ($res:expr $(, $expect_fmt:expr $(, $args:expr)*)?) => {{
@@ -71,8 +89,11 @@ fn alloc_and_fill_av_dict(entries: Vec<(String, String)>) -> StrResult<*mut AVDi
             unsafe { av_dict_set(&mut dict_ptr, key.as_ptr(), value.as_ptr(), 0) },
             "Error while setting dict entry {:?}",
             (key, value)
-        )?;
-        // todo: deallocate dict if error?
+        )
+        .map_err(|res| unsafe {
+            av_dict_free(&mut dict_ptr);
+            res
+        })?;
     }
 
     Ok(dict_ptr)
@@ -147,12 +168,6 @@ pub enum FfmpegResultOk {
     NoOutput,
 }
 
-pub struct FfmpegFrame {
-    pub frame_id: usize,
-    pub texture: Arc<Texture>,
-    av_frame_id: usize,
-}
-
 pub struct FfmpegPacket {
     pub frame_id: usize,
     pub data: Vec<u8>,
@@ -163,9 +178,8 @@ pub struct FfmpegPacket {
 
 struct FfmpegVideoCoder {
     context_ptr: *mut AVCodecContext,
-    av_frame_ptrs: Vec<*mut AVFrame>,
-    frame_options: Vec<FfmpegOption>,
-    resolution: (u32, u32),
+    hw_device_ref_ptr: Option<*mut AVBufferRef>,
+    frame_ptr: *mut AVFrame,
 }
 
 unsafe impl Send for FfmpegVideoCoder {}
@@ -194,44 +208,22 @@ impl FfmpegVideoCoder {
         }
         packets
     }
-
-    fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
-        let mut frames = vec![];
-        let (width, height) = self.resolution;
-        for texture in textures {
-            let av_frame_ptr = trace_null_ptr!(av_frame_alloc())?;
-            unsafe {
-                (*av_frame_ptr).width = width as _;
-                (*av_frame_ptr).height = height as _;
-                (*av_frame_ptr).format = mem::transmute(PIXEL_FORMAT);
-            }
-            set_options(av_frame_ptr as _, self.frame_options.clone())?;
-            // trace_av_err!(av_frame_get_buffer(av_frame_ptr, number_of_buffers as _))?;
-
-            frames.push(FfmpegFrame {
-                frame_id: 0,
-                texture,
-                av_frame_id: av_frame_ptr as _,
-            });
-            self.av_frame_ptrs.push(av_frame_ptr);
-        }
-        Ok(frames)
-    }
 }
 
 impl Drop for FfmpegVideoCoder {
     fn drop(&mut self) {
         unsafe {
-            avcodec_free_context(&mut self.context_ptr);
-            for p in &mut self.av_frame_ptrs {
-                av_frame_free(p);
+            av_frame_free(&mut self.frame_ptr);
+            if let Some(mut hw_device_ref_ptr) = self.hw_device_ref_ptr {
+                av_buffer_unref(&mut hw_device_ref_ptr);
             }
+            avcodec_free_context(&mut self.context_ptr);
         }
     }
 }
 
 pub struct FfmpegVideoEncoder {
-    interop_type: FfmpegVideoEncoderInteropType,
+    encoder_type: FfmpegVideoEncoderType,
     video_coder: FfmpegVideoCoder,
 }
 
@@ -239,16 +231,66 @@ impl FfmpegVideoEncoder {
     pub fn new(
         resolution: (u32, u32),
         fps: f32,
-        encoder_name: &str,
         video_encoder_desc: FfmpegVideoEncoderDesc,
     ) -> StrResult<Self> {
-        let codec_ptr = trace_null_ptr!(avcodec_find_encoder_by_name(to_c_str(encoder_name)?))?;
+        let encoder_type = video_encoder_desc.encoder_type;
+
+        let context_format;
+        let mut maybe_hw_device_type = None;
+        let maybe_hw_name_c_str = None;
+        match encoder_type {
+            #[cfg(target_os = "linux")]
+            FfmpegVideoEncoderType::CUDA => {
+                context_format = AVPixelFormat::AV_PIX_FMT_CUDA;
+                maybe_hw_device_type = Some(AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA);
+
+                trace_err!(cuda_init())?;
+                let cu_device = trace_err!(CudaDevice::get_current())?;
+                let cu_device_props = trace_err!(cu_device.get_properties())?;
+                maybe_hw_name_c_str =
+                    Some(unsafe { CStr::from_ptr(&cu_device_props.name as _).to_owned() });
+            }
+            #[cfg(windows)]
+            FfmpegVideoEncoderType::D3D11VA => {
+                context_format = AVPixelFormat::AV_PIX_FMT_D3D11;
+                maybe_hw_device_type = Some(AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA);
+            }
+            #[cfg(target_os = "macos")]
+            FfmpegVideoEncoderType::D3D11VA => {
+                context_format = AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX;
+                maybe_hw_device_type = Some(AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX);
+            }
+            FfmpegVideoEncoderType::Software => context_format = SW_FORMAT,
+        }
+
+        let mut maybe_hw_device_ref_ptr = None;
+        if let Some(hw_device_type) = maybe_hw_device_type {
+            let hw_name_ptr = maybe_hw_name_c_str.map_or(null(), |c_str: CString| c_str.as_ptr());
+
+            let mut hw_device_ref_ptr = null_mut();
+            trace_av_err!(unsafe {
+                av_hwdevice_ctx_create(
+                    &mut hw_device_ref_ptr,
+                    hw_device_type,
+                    hw_name_ptr,
+                    null_mut(),
+                    0,
+                )
+            })?;
+            maybe_hw_device_ref_ptr = Some(hw_device_ref_ptr);
+        }
+
+        let codec_ptr = trace_null_ptr!(avcodec_find_encoder_by_name(to_c_str(
+            &video_encoder_desc.encoder_name
+        )?))?;
 
         let context_ptr = trace_null_ptr!(avcodec_alloc_context3(codec_ptr))?;
         let (width, height) = resolution;
         unsafe {
             (*context_ptr).width = width as _;
             (*context_ptr).height = height as _;
+            (*context_ptr).pix_fmt = context_format;
+            (*context_ptr).sw_pix_fmt = SW_FORMAT;
             (*context_ptr).time_base = AVRational {
                 num: 1,
                 den: fps as _,
@@ -257,67 +299,86 @@ impl FfmpegVideoEncoder {
                 num: fps as _,
                 den: 1,
             };
-            (*context_ptr).max_b_frames = 0;
-            (*context_ptr).pix_fmt = PIXEL_FORMAT;
         }
-        //todo: set in settings: bit_rate, gop_size
+        //todo: set in settings: bit_rate, gop_size, max_b_frames = 0
         set_options(context_ptr as _, video_encoder_desc.context_options)?;
         // todo: set nvenc/amf/etc options in settings: i.e. preset
         set_options(context_ptr as _, video_encoder_desc.priv_data_options)?;
+
+        let mut maybe_hw_frames_ref_ptr = None;
+        if let Some(hw_device_ref_ptr) = maybe_hw_device_ref_ptr {
+            let mut hw_frames_ref_ptr = trace_null_ptr!(av_hwframe_ctx_alloc(hw_device_ref_ptr))?;
+            let frames_ctx_ptr = unsafe { (*hw_frames_ref_ptr).data } as *mut AVHWFramesContext;
+            unsafe {
+                (*frames_ctx_ptr).width = width as _;
+                (*frames_ctx_ptr).height = height as _;
+                (*frames_ctx_ptr).format = context_format;
+                (*frames_ctx_ptr).sw_format = SW_FORMAT;
+                (*frames_ctx_ptr).device_ref = hw_device_ref_ptr;
+                (*frames_ctx_ptr).device_ctx = (*hw_device_ref_ptr).data as _;
+            }
+            set_options(
+                frames_ctx_ptr as _,
+                video_encoder_desc.hw_frames_context_options,
+            )?;
+            // todo: set initial_pool_size (= 20) in settings
+
+            trace_av_err!(unsafe { av_hwframe_ctx_init(hw_frames_ref_ptr) }).map_err(
+                |res| unsafe {
+                    av_buffer_unref(&mut hw_frames_ref_ptr);
+                    res
+                },
+            )?;
+
+            // let new_hw_frames_ref_ptr = av_buffer_ref(hw_frames_ref_ptr);
+            unsafe {
+                (*context_ptr).hw_device_ctx = hw_device_ref_ptr;
+                (*context_ptr).hw_frames_ctx = hw_frames_ref_ptr;
+                (*context_ptr).sw_pix_fmt = SW_FORMAT;
+            };
+            // av_buffer_unref(&mut hw_frames_ref_ptr);
+            // trace_null_ptr!(new_hw_frames_ref_ptr)?;
+
+            maybe_hw_frames_ref_ptr = Some(hw_frames_ref_ptr)
+        }
 
         let mut opts_ptr = alloc_and_fill_av_dict(video_encoder_desc.codec_open_options)?;
         trace_av_err!(unsafe { avcodec_open2(context_ptr, codec_ptr, &mut opts_ptr) })?;
         // todo: read encoder set opts
         unsafe { av_dict_free(&mut opts_ptr) };
 
-        //https://stackoverflow.com/questions/49862610/opengl-to-ffmpeg-encode
-        if let FfmpegVideoEncoderInteropType::CudaNvenc = video_encoder_desc.interop_type {
-            trace_err!(cuda_init())?;
-            let cu_device = trace_err!(CudaDevice::get_current())?;
-            let cu_device_props = trace_err!(cu_device.get_properties())?;
-
-            let mut device_ref_ptr = null_mut();
-            trace_av_err!(unsafe {
-                av_hwdevice_ctx_create(
-                    &mut device_ref_ptr,
-                    AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA,
-                    cu_device_props.name.as_ptr(),
-                    null_mut(),
-                    0,
-                )
-            })?;
-            let device_context_ptr = unsafe { (*device_ref_ptr).data } as *mut AVHWDeviceContext;
-            let hw_context_ptr = unsafe { (*device_context_ptr).hwctx } as *mut AVCUDADeviceContext;
-            let cu_context = unsafe { (*hw_context_ptr).cuda_ctx };
-
-            let frame_ref_ptr = trace_null_ptr!(av_hwframe_ctx_alloc(device_ref_ptr))?;
-            let frame_context_ptr = unsafe { (*frame_ref_ptr).data } as *mut AVHWFramesContext;
+        let frame_ptr = trace_null_ptr!(av_frame_alloc())?;
+        set_options(frame_ptr as _, video_encoder_desc.frame_options)?;
+        if let Some(hw_frames_ref_ptr) = maybe_hw_frames_ref_ptr {
+            trace_av_err!(unsafe { av_hwframe_get_buffer(hw_frames_ref_ptr, frame_ptr, 0) })?;
+            trace_null_ptr!((*frame_ptr).hw_frames_ctx)?;
+        } else {
             unsafe {
-                (*frame_context_ptr).width = width as _;
-                (*frame_context_ptr).height = height as _;
-                (*frame_context_ptr).sw_format = AV_PIX_FMT_0BGR32;
-                (*frame_context_ptr).format = AVPixelFormat::AV_PIX_FMT_CUDA;
-                (*frame_context_ptr).device_ref = device_ref_ptr;
-                (*frame_context_ptr).device_ctx = device_context_ptr;
+                (*frame_ptr).width = width as _;
+                (*frame_ptr).height = height as _;
+                (*frame_ptr).format = mem::transmute(SW_FORMAT);
             }
-            trace_av_err!(unsafe { av_hwframe_ctx_init(frame_ref_ptr) })?;
-
-            let mut old_cu_context = null_mut();
-            unsafe { cuCtxPopCurrent_v2(&mut old_cu_context) };
-            trace_cu_err!(cuCtxPushCurrent_v2(cu_context))?;
-
-            // todo convert image to buffer, then buffer to cuda buffer
-
-            todo!()
+            trace_av_err!(unsafe { av_frame_get_buffer(frame_ptr, FRAME_BUFFER_SIZE_ALIGNMENT) })?;
         }
 
+        // if encoder_type != FfmpegVideoEncoderType::Software {
+
+        //         let mut old_cu_context = null_mut();
+        //         unsafe { cuCtxPopCurrent_v2(&mut old_cu_context) };
+        //         trace_cu_err!(cuCtxPushCurrent_v2(cu_context))?;
+
+        //         // todo convert image to buffer, then buffer to cuda buffer
+
+        //         todo!()
+        //     }
+        // }
+
         Ok(FfmpegVideoEncoder {
-            interop_type: video_encoder_desc.interop_type,
+            encoder_type,
             video_coder: FfmpegVideoCoder {
                 context_ptr,
-                av_frame_ptrs: vec![],
-                frame_options: video_encoder_desc.frame_options,
-                resolution: (width, height),
+                hw_device_ref_ptr: maybe_hw_device_ref_ptr,
+                frame_ptr,
             },
         })
     }
@@ -332,34 +393,45 @@ impl FfmpegVideoEncoder {
             .create_packets(count, max_size, data_offset)
     }
 
-    pub fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
-        self.video_coder.create_frames(textures)
-    }
+    pub fn submit_frame(
+        &self,
+        frame_id: usize,
+        texture_callback: impl FnOnce(&Arc<Texture>),
+    ) -> StrResult {
+        let frame_ptr = self.video_coder.frame_ptr;
+        unsafe { (*frame_ptr).pts = frame_id as _ };
 
-    pub fn submit_frame(&self, frame: &FfmpegFrame) -> StrResult {
-        let av_frame_ptr = frame.av_frame_id as *mut AVFrame;
-        unsafe { (*av_frame_ptr).pts = frame.frame_id as _ };
+        match self.encoder_type {
+            #[cfg(target_os = "linux")]
+            FfmpegVideoEncoderType::CUDA => todo!(),
+            #[cfg(windows)]
+            FfmpegVideoEncoderType::D3D11VA => todo!(),
+            #[cfg(target_os = "macos")]
+            FfmpegVideoEncoderType::VideoToolbox => todo!(),
+            FfmpegVideoEncoderType::Software => {
+                trace_av_err!(unsafe { av_frame_make_writable(frame_ptr) })?;
 
-        match self.interop_type {
-            FfmpegVideoEncoderInteropType::CudaNvenc => todo!(),
-            FfmpegVideoEncoderInteropType::SoftwareRGB => {
-                trace_av_err!(unsafe { av_frame_make_writable(av_frame_ptr) })?;
+                // let texture = Texture::
 
-                let frame_data = frame.texture.read()?;
+                // let frame_data = texture.read()?;
 
                 // todo: check color channel order
-                for i in 0..frame_data.len() / 4 {
-                    for c in 0..3 {
-                        unsafe { *(*av_frame_ptr).data[c].add(i) = frame_data[i * 4 + c] }
-                    }
-                }
+                // for i in 0..frame_data.len() / 4 {
+                //     for c in 0..3 {
+                //         unsafe { *(*frame_ptr).data[c].add(i) = frame_data[i * 4 + c] }
+                //     }
+                // }
             }
         }
 
-        trace_av_err!(unsafe { avcodec_send_frame(self.video_coder.context_ptr, av_frame_ptr) })
+        trace_av_err!(unsafe { avcodec_send_frame(self.video_coder.context_ptr, frame_ptr) })
     }
 
     pub fn receive_packet(&mut self, packet: &mut FfmpegPacket) -> StrResult<FfmpegResultOk> {
+        packet.av_packet.data = null_mut();
+        packet.av_packet.size = 0;
+        packet.av_packet.stream_index = 0;
+
         let res =
             unsafe { avcodec_receive_packet(self.video_coder.context_ptr, &mut packet.av_packet) };
         if res == AVERROR_EOF || res == AVERROR(EAGAIN) {
@@ -368,12 +440,12 @@ impl FfmpegVideoEncoder {
             trace_av_err!(res)?;
 
             // todo: try to avoid copy?
-            // I could send the packet where I overwrite the first 8 bytes for the packet
+            // I could send the packet where I overwrite the first 8 bytes for a packet
             // index, then I send another packet with the same index, the header and
             // the overwritten 8 bytes.
             packet.size = packet.av_packet.size as _;
             unsafe {
-                std::ptr::copy_nonoverlapping(
+                copy_nonoverlapping(
                     packet.av_packet.data,
                     &mut packet.data[packet.data_offset],
                     packet.size,
@@ -389,38 +461,102 @@ impl FfmpegVideoEncoder {
 }
 
 pub struct FfmpegVideoDecoder {
+    decoder_type: FfmpegVideoDecoderType,
     video_coder: FfmpegVideoCoder,
+    graphics_al: Arc<GraphicsAbstractionLayer>,
 }
 
 impl FfmpegVideoDecoder {
     pub fn new(
+        graphics_al: Arc<GraphicsAbstractionLayer>,
         resolution: (u32, u32),
-        decoder_name: &str,
         video_decoder_desc: FfmpegVideoDecoderDesc,
     ) -> StrResult<Self> {
-        let codec_ptr = trace_null_ptr!(avcodec_find_decoder_by_name(to_c_str(decoder_name)?))?;
+        let decoder_type = video_decoder_desc.decoder_type;
+
+        let hw_format;
+        let hw_device_type;
+        match decoder_type {
+            FfmpegVideoDecoderType::MediaCodec => {
+                hw_format = AVPixelFormat::AV_PIX_FMT_MEDIACODEC;
+                hw_device_type = AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC;
+            }
+            FfmpegVideoDecoderType::D3D11VA => {
+                hw_format = AVPixelFormat::AV_PIX_FMT_D3D11;
+                hw_device_type = AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA;
+            }
+        };
+
+        let codec_ptr = trace_null_ptr!(avcodec_find_decoder_by_name(to_c_str(
+            &video_decoder_desc.decoder_name
+        )?))?;
 
         let context_ptr = trace_null_ptr!(avcodec_alloc_context3(codec_ptr))?;
         let (width, height) = resolution;
         unsafe {
             (*context_ptr).width = width as _;
             (*context_ptr).height = height as _;
-            (*context_ptr).pix_fmt = PIXEL_FORMAT;
+            (*context_ptr).pix_fmt = hw_format;
+            (*context_ptr).sw_pix_fmt = SW_FORMAT;
         }
         set_options(context_ptr as _, video_decoder_desc.context_options)?;
         set_options(context_ptr as _, video_decoder_desc.priv_data_options)?;
+
+        let mut hw_device_ref_ptr = null_mut();
+        trace_av_err!(unsafe {
+            av_hwdevice_ctx_create(
+                &mut hw_device_ref_ptr,
+                hw_device_type,
+                null_mut(),
+                null_mut(),
+                0,
+            )
+        })?;
+
+        let mut hw_frames_ref_ptr = trace_null_ptr!(av_hwframe_ctx_alloc(hw_device_ref_ptr))?;
+        let frames_ctx_ptr = unsafe { (*hw_frames_ref_ptr).data } as *mut AVHWFramesContext;
+        unsafe {
+            (*frames_ctx_ptr).width = width as _;
+            (*frames_ctx_ptr).height = height as _;
+            (*frames_ctx_ptr).format = hw_format;
+            (*frames_ctx_ptr).sw_format = SW_FORMAT;
+            (*frames_ctx_ptr).device_ref = hw_device_ref_ptr;
+            (*frames_ctx_ptr).device_ctx = (*hw_device_ref_ptr).data as _;
+        }
+        set_options(
+            frames_ctx_ptr as _,
+            video_decoder_desc.hw_frames_context_options,
+        )?;
+        // todo: set initial_pool_size (= 20) in settings
+
+        trace_av_err!(unsafe { av_hwframe_ctx_init(hw_frames_ref_ptr) }).map_err(|res| unsafe {
+            av_buffer_unref(&mut hw_frames_ref_ptr);
+            res
+        })?;
+
+        unsafe {
+            (*context_ptr).hw_device_ctx = hw_device_ref_ptr;
+            (*context_ptr).hw_frames_ctx = hw_frames_ref_ptr;
+            (*context_ptr).sw_pix_fmt = SW_FORMAT;
+        };
 
         let mut opts_ptr = alloc_and_fill_av_dict(video_decoder_desc.codec_open_options)?;
         trace_av_err!(unsafe { avcodec_open2(context_ptr, codec_ptr, &mut opts_ptr) })?;
         unsafe { av_dict_free(&mut opts_ptr) };
 
+        let frame_ptr = trace_null_ptr!(av_frame_alloc())?;
+        set_options(frame_ptr as _, video_decoder_desc.frame_options)?;
+        trace_av_err!(unsafe { av_hwframe_get_buffer(hw_frames_ref_ptr, frame_ptr, 0) })?;
+        trace_null_ptr!((*frame_ptr).hw_frames_ctx)?;
+
         Ok(FfmpegVideoDecoder {
+            decoder_type,
             video_coder: FfmpegVideoCoder {
                 context_ptr,
-                av_frame_ptrs: vec![],
-                frame_options: video_decoder_desc.frame_options,
-                resolution: (width, height),
+                hw_device_ref_ptr: Some(hw_device_ref_ptr),
+                frame_ptr,
             },
+            graphics_al,
         })
     }
 
@@ -434,14 +570,14 @@ impl FfmpegVideoDecoder {
             .create_packets(count, max_size, data_offset)
     }
 
-    pub fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
-        self.video_coder.create_frames(textures)
-    }
+    // pub fn create_frames(&mut self, textures: Vec<Arc<Texture>>) -> StrResult<Vec<FfmpegFrame>> {
+    //     self.video_coder.create_frames(textures)
+    // }
 
     pub fn decode(
         &mut self,
         packet: &mut FfmpegPacket,
-        frame: &mut FfmpegFrame,
+        texture_callback: impl FnOnce(&Texture, u64),
     ) -> StrResult<FfmpegResultOk> {
         packet.av_packet.data = &mut packet.data[packet.data_offset];
         packet.av_packet.size = packet.size as _;
@@ -450,16 +586,23 @@ impl FfmpegVideoDecoder {
             avcodec_send_packet(self.video_coder.context_ptr, &packet.av_packet)
         })?;
 
-        let av_frame_ptr = frame.av_frame_id as _;
-
+        let frame_ptr = self.video_coder.frame_ptr;
         let mut filled = false;
         loop {
-            let res = unsafe { avcodec_receive_frame(self.video_coder.context_ptr, av_frame_ptr) };
+            let res = unsafe { avcodec_receive_frame(self.video_coder.context_ptr, frame_ptr) };
             if res == AVERROR_EOF || res == AVERROR(EAGAIN) {
                 if filled {
-                    // todo: fill frame
+                    let texture_ptr = unsafe { (*frame_ptr).data[0] };
+                    let frame_id = unsafe { (*frame_ptr).pts } as _;
 
-                    frame.frame_id = unsafe { (*av_frame_ptr).pts } as _;
+                    match self.decoder_type {
+                        FfmpegVideoDecoderType::MediaCodec => todo!(),
+                        FfmpegVideoDecoderType::D3D11VA => {
+                            let texture =
+                                Texture::from_handle(texture_ptr as _, self.graphics_al.clone())?;
+                            texture_callback(&texture, frame_id);
+                        }
+                    }
 
                     break Ok(FfmpegResultOk::SomeOutput);
                 } else {
