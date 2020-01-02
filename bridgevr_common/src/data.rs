@@ -47,22 +47,23 @@ pub struct MotionDesc {
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub enum FfmpegVideoEncoderType {
     #[cfg(target_os = "linux")]
-    CUDA, // Linux Nvidia
-    // vulkan soon?   // Linux AMD
+    CUDA,
+    // vulkan for AMD soon?
     // I excluded VAAPI because there are no Rust libraries
     #[cfg(windows)]
-    D3D11VA, // Windows
+    D3D11VA,
 
     #[cfg(target_os = "macos")]
-    VideoToolbox, // macOS
-
-    Software, // All (for testing)
+    VideoToolbox,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum FfmpegVideoDecoderType {
-    MediaCodec, // Android
-    D3D11VA,    // Windows
+    #[cfg(target_os = "android")]
+    MediaCodec,
+
+    #[cfg(windows)]
+    D3D11VA,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

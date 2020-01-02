@@ -23,16 +23,13 @@ use std::{
 
 pub use gfx_hal::format::Format;
 
-#[cfg(all(
-    any(target_os = "linux", target_os = "android", windows),
-    feature = "vulkan"
-))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use gfx_backend_vulkan as back;
 
-#[cfg(all(windows, feature = "dx11"))]
+#[cfg(windows)]
 use gfx_backend_dx11 as back;
 
-#[cfg(all(target_os = "macos", feature = "metal"))]
+#[cfg(target_os = "macos")]
 use gfx_backend_metal as back;
 
 const GRAPHICS_TIMEOUT: Duration = Duration::from_secs(1);
@@ -47,14 +44,14 @@ type MemoryImpl = <back::Backend as gfx_hal::Backend>::Memory;
 type ImageImpl = <back::Backend as gfx_hal::Backend>::Image;
 type ImageViewImpl = <back::Backend as gfx_hal::Backend>::ImageView;
 
-#[cfg(feature = "dx11")]
+#[cfg(windows)]
 macro_rules! addr_of {
     ($e:expr) => {
         &mut $e as *mut _ as _
     };
 }
 
-#[cfg(feature = "dx11")]
+#[cfg(windows)]
 pub fn format_from_native(dxgi_format: u32) -> Format {
     use winapi::shared::dxgiformat::*;
     match dxgi_format {
@@ -64,35 +61,35 @@ pub fn format_from_native(dxgi_format: u32) -> Format {
     }
 }
 
-#[cfg(feature = "vulkan")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn format_from_native(dxgi_format: u32) -> Format {
     todo!();
 }
 
 pub struct TextureGuard {
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     ptr: ash::vk::Image,
 
-    #[cfg(feature = "dx11")]
+    #[cfg(windows)]
     ptr: wio::com::ComPtr<winapi::um::d3d11::ID3D11Texture2D>,
 }
 
-#[cfg(feature = "vulkan")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn lock_texture_from_handle(handle: u64, timeout: Duration) -> StrResult<TextureGuard> {
     todo!()
 }
 
-#[cfg(feature = "dx11")]
+#[cfg(windows)]
 pub fn lock_texture_from_handle(handle: u64, timeout: Duration) -> StrResult<TextureGuard> {
     todo!()
 }
 
-#[cfg(feature = "vulkan")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn unlock_texture(texture_guard: TextureGuard) {
     todo!()
 }
 
-#[cfg(feature = "dx11")]
+#[cfg(windows)]
 pub fn unlock_texture(texture_guard: TextureGuard) {
     todo!()
 }
@@ -176,14 +173,24 @@ impl GraphicsAbstractionLayer {
         })
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn from_device_ptr(device_ptr: u64) -> StrResult<Self> {
+        todo!();
+    }
+
+    #[cfg(windows)]
+    pub fn from_device_ptr(device_ptr: u64) -> StrResult<Self> {
+        todo!();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn instance_ptr(&self) -> u64 {
         use ash::{version::InstanceV1_0, vk::Handle};
 
         self.instance.raw.0.handle().as_raw()
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn physical_device_ptr(&self) -> u64 {
         use ash::vk::{self, Handle};
 
@@ -198,7 +205,7 @@ impl GraphicsAbstractionLayer {
         physical_device_mock.handle.as_raw()
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn device_ptr(&self) -> u64 {
         use ash::vk::Handle;
 
@@ -210,7 +217,7 @@ impl GraphicsAbstractionLayer {
         raw.0.handle().as_raw()
     }
 
-    #[cfg(feature = "dx11")]
+    #[cfg(windows)]
     pub fn device_ptr(&self) -> u64 {
         use winapi::um::d3d11;
         use wio::com::ComPtr;
@@ -404,12 +411,12 @@ impl Texture {
         })
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_handle(handle: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
         trace_str!("Cannot create image from handle")
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_handle_and_desc(
         handle: u64,
         graphics_al: Arc<GraphicsAbstractionLayer>,
@@ -419,27 +426,32 @@ impl Texture {
         todo!();
     }
 
-    #[cfg(feature = "dx11")]
+    #[cfg(windows)]
     pub fn from_handle(handle: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
         todo!();
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(windows)]
+    pub fn from_ptr(ptr: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
+        todo!();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn as_ptr(&self) -> u64 {
         todo!();
     }
 
-    #[cfg(feature = "dx11")]
+    #[cfg(windows)]
     pub fn as_ptr(&self) -> u64 {
         todo!();
     }
 
-    #[cfg(feature = "vulkan")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn as_handle(&self) -> u64 {
         self.as_ptr()
     }
 
-    #[cfg(feature = "dx11")]
+    #[cfg(windows)]
     pub fn as_handle(&self) -> u64 {
         todo!();
     }

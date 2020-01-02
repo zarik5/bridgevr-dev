@@ -34,11 +34,16 @@ required = true
 [[package.metadata.android.permission]]
 name = 'android.permission.RECORD_AUDIO'
 
+[features]
+default = ['vulkan']
+dx11 = ['bridgevr_common/dx11']
+vulkan = ['bridgevr_common/vulkan']
+
 [dependencies]
 chrono = '0.4.10'
 log = '0.4.8'
 fern = '0.5.9'
 ash = '0.29.0'
 parking_lot = "0.10.0"
-bridgevr_common = { path = '../bridgevr_common', features = ['vulkan'] }
+bridgevr_common = { path = '../bridgevr_common' }
 
