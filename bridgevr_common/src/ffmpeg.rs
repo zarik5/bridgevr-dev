@@ -1,8 +1,12 @@
 #![allow(clippy::cast_ptr_alignment)]
+#![allow(dead_code)]
 
 use crate::{data::*, rendering::*, *};
 use ffmpeg_sys::*;
 use std::{ffi::CString, mem, ptr::*, sync::Arc};
+
+#[cfg(target_os = "linux")]
+use cuda::{driver::*, ffi::cuda::*, runtime::*};
 
 //https://ffmpeg.org/doxygen/trunk/hwcontext_8h.html
 
@@ -16,6 +20,7 @@ const TRACE_CONTEXT: &str = "FFmpeg";
 
 const SW_FORMAT: AVPixelFormat = AVPixelFormat::AV_PIX_FMT_NV12;
 
+#[cfg(target_os = "linux")]
 macro_rules! trace_av_err {
     ($res:expr $(, $expect_fmt:expr $(, $args:expr)*)?) => {{
         if $res != 0  {
@@ -50,8 +55,8 @@ macro_rules! trace_null_ptr {
 #[cfg(target_os = "linux")]
 #[repr(C)]
 struct AVCUDADeviceContext {
-    cuda_ctx: cuda::ffi::cuda::CUcontext,
-    stream: cuda::ffi::cuda::CUstream,
+    cuda_ctx: CUcontext,
+    stream: CUstream,
     // ...
 }
 
@@ -314,18 +319,18 @@ impl FfmpegVideoEncoder {
 
         let hw_format;
         let hw_device_type;
-        let maybe_hw_name_c_str = None;
+        // let mut maybe_hw_name_c_str = None;
         match encoder_type {
             #[cfg(target_os = "linux")]
             FfmpegVideoEncoderType::CUDA => {
                 hw_format = AVPixelFormat::AV_PIX_FMT_CUDA;
                 hw_device_type = AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA;
 
-                trace_err!(cuda_init())?;
-                let cu_device = trace_err!(CudaDevice::get_current())?;
-                let cu_device_props = trace_err!(cu_device.get_properties())?;
-                maybe_hw_name_c_str =
-                    Some(unsafe { CStr::from_ptr(&cu_device_props.name as _).to_owned() });
+                // trace_err!(cuda_init())?;
+                // let cu_device = trace_err!(CudaDevice::get_current())?;
+                // let cu_device_props = trace_err!(cu_device.get_properties())?;
+                // maybe_hw_name_c_str =
+                //     Some(unsafe { CStr::from_ptr(&cu_device_props.name as _).to_owned() });
             }
             #[cfg(windows)]
             FfmpegVideoEncoderType::D3D11VA => {
@@ -339,14 +344,14 @@ impl FfmpegVideoEncoder {
             }
         }
 
-        let hw_name_ptr = maybe_hw_name_c_str.map_or(null(), |c_str: CString| c_str.as_ptr());
+        // let hw_name_ptr = maybe_hw_name_c_str.map_or(null(), |c_str: CString| c_str.as_ptr());
 
         let mut hw_device_ref_ptr = null_mut();
         trace_av_err!(unsafe {
             av_hwdevice_ctx_create(
                 &mut hw_device_ref_ptr,
                 hw_device_type,
-                hw_name_ptr,
+                null_mut(), //hw_name_ptr,
                 null_mut(),
                 0,
             )
@@ -355,16 +360,21 @@ impl FfmpegVideoEncoder {
         let hw_device_ctx_ptr = unsafe { (*hw_device_ref_ptr).data } as *mut AVHWDeviceContext;
 
         let graphics_al;
-        if hw_device_type == AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA {
-            graphics_al = Arc::new(GraphicsAbstractionLayer::new(None)?);
-        // todo: setup cuda context
-        } else if hw_device_type == AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA {
+        #[cfg(target_os = "linux")]
+        {
+            if hw_device_type == AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA {
+                graphics_al = Arc::new(GraphicsAbstractionLayer::new(None)?);
+            // todo: setup cuda context
+            } else {
+                unimplemented!();
+            }
+        }
+        #[cfg(windows)]
+        {
             let d3d11va_device_ctx_ptr =
                 unsafe { (*hw_device_ctx_ptr).hwctx } as *mut AVD3D11VADeviceContext;
             let device_ptr = unsafe { (*d3d11va_device_ctx_ptr).device } as _;
             graphics_al = Arc::new(GraphicsAbstractionLayer::from_device_ptr(device_ptr)?);
-        } else {
-            unimplemented!();
         }
 
         let encoder_name_c_string = trace_err!(CString::new(video_encoder_desc.encoder_name))?;
@@ -472,11 +482,13 @@ impl FfmpegVideoEncoder {
     }
 }
 
+#[cfg(any(windows, target_os = "android"))]
 pub struct FfmpegVideoDecoder {
     decoder_type: FfmpegVideoDecoderType,
     video_coder: VideoCoder,
 }
 
+#[cfg(any(windows, target_os = "android"))]
 impl FfmpegVideoDecoder {
     pub fn new(
         resolution: (u32, u32),
@@ -514,15 +526,16 @@ impl FfmpegVideoDecoder {
         let hw_device_ctx_ptr = unsafe { (*hw_device_ref_ptr).data } as *mut AVHWDeviceContext;
 
         let graphics_al;
-        if hw_device_type == AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC {
+        #[cfg(target_os = "android")]
+        {
             graphics_al = Arc::new(GraphicsAbstractionLayer::new(None)?);
-        } else if hw_device_type == AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA {
+        }
+        #[cfg(windows)]
+        {
             let d3d11va_device_ctx_ptr =
                 unsafe { (*hw_device_ctx_ptr).hwctx } as *mut AVD3D11VADeviceContext;
             let device_ptr = unsafe { (*d3d11va_device_ctx_ptr).device } as _;
             graphics_al = Arc::new(GraphicsAbstractionLayer::from_device_ptr(device_ptr)?);
-        } else {
-            unimplemented!();
         }
 
         let decoder_name_c_string = trace_err!(CString::new(video_decoder_desc.decoder_name))?;
@@ -577,20 +590,20 @@ impl FfmpegVideoDecoder {
             let res = unsafe { avcodec_receive_frame(self.video_coder.context_ptr, frame_ptr) };
             if res == AVERROR_EOF || res == AVERROR(EAGAIN) {
                 if filled {
-                    let texture_ptr = unsafe { (*frame_ptr).data[0] };
-                    let frame_id = unsafe { (*frame_ptr).pts } as _;
-
                     match self.decoder_type {
                         #[cfg(target_os = "android")]
                         FfmpegVideoDecoderType::MediaCodec => todo!(),
                         #[cfg(windows)]
                         FfmpegVideoDecoderType::D3D11VA => {
+                            let texture_ptr = unsafe { (*frame_ptr).data[0] };
+                            let frame_id = unsafe { (*frame_ptr).pts };
                             let texture = Arc::new(Texture::from_handle(
                                 texture_ptr as _,
                                 self.video_coder.graphics_al.clone(),
                             )?);
-                            texture_callback(&texture, frame_id);
+                            texture_callback(&texture, frame_id as _);
                         }
+                        _ => (),
                     }
 
                     break Ok(FfmpegResultOk::SomeOutput);

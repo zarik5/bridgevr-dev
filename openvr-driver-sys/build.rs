@@ -2,24 +2,17 @@ fn main() {
     let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let include_flag_string = format!("-I{}", out_path.to_string_lossy());
 
-    if cfg!(windows) {
-        cc::Build::new()
-            .cpp(true)
-            .file("src/bindings.cpp")
-            .flag("-Isrc")
-            .flag("-Iinclude")
-            .flag(&include_flag_string)
-            .compile("bindings");
-    } else {
-        cc::Build::new()
-            .flag("-Wno-unused-parameter")
-            .cpp(true)
-            .file("src/bindings.cpp")
-            .flag("-Isrc")
-            .flag("-Iinclude")
-            .flag(&include_flag_string)
-            .compile("bindings");
+    let mut build = cc::Build::new();
+    let mut build = build
+        .cpp(true)
+        .file("src/bindings.cpp")
+        .flag("-Isrc")
+        .flag("-Iinclude")
+        .flag(&include_flag_string);
+    if !cfg!(windows) {
+        build = build.flag("-Wno-unused-parameter");
     }
+    build.compile("bindings");
 
     bindgen::builder()
         .clang_arg("-xc++")
@@ -40,7 +33,6 @@ fn main() {
         // .rustified_enum("vr::EIOBufferError")
         .generate_inline_functions(true)
         .blacklist_function("vr::.*")
-        .blacklist_item("std")
         .blacklist_type("vr::IVRSettings")
         .blacklist_type("vr::CVRSettingHelper")
         .blacklist_type("vr::ITrackedDeviceServerDriver")

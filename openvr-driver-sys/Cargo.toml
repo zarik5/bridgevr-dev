@@ -1,6 +1,6 @@
 [package]
 name = 'openvr-driver-sys'
-version = '0.1.8'
+version = '0.1.9'
 authors = ['Riccardo Zaglia <github.com/zarik5>']
 license = 'MIT'
 edition = '2018'
@@ -10,5 +10,5 @@ build = 'build.rs'
 crate-type = ['rlib']
 
 [build-dependencies]
-bindgen = '*'
+bindgen = '0.52.0'
 cc = '*'

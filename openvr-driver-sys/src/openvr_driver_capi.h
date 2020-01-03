@@ -356,7 +356,6 @@ CLASS_C_INTERFACE(
     })
 
 FORWARD_FN(VRSettings, const char *, vrSettings, GetSettingsErrorNameFromEnum, EVRSettingsError);
-FORWARD_FN(VRSettings, bool, vrSettings, Sync, bool, EVRSettingsError *);
 FORWARD_FN(VRSettings, void, vrSettings, SetBool,
            const char *, const char *, bool, EVRSettingsError *);
 FORWARD_FN(VRSettings, void, vrSettings, SetInt32,

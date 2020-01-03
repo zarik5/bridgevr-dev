@@ -592,11 +592,6 @@ forward_fns! {
             .to_str()
             .unwrap()
     },
-    [custom] unsafe fn settings_sync(force: Option<bool>) -> Result<bool, EVRSettingsError> {
-        let mut error = 0;
-        let res = private::vrSettingsSync(force.unwrap_or(false), &mut error);
-        if error == 0 { Ok(res) } else { Err(error) }
-    },
     [err] vrSettingsSetBool => fn settings_set_bool(
         section: &str,
         settings_key: &str,
