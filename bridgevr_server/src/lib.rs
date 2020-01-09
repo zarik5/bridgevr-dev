@@ -6,7 +6,9 @@ mod statistics;
 mod video_encoder;
 // mod nvenc;
 
-use bridgevr_common::{audio::*, constants::*, data::*, ring_channel::*, sockets::*, *};
+use bridgevr_common::{
+    audio::*, constants::*, data::*, rendering::*, ring_channel::*, sockets::*, *,
+};
 use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
@@ -36,7 +38,7 @@ fn get_settings() -> StrResult<Settings> {
 }
 
 fn begin_server_loop(
-    graphics: Arc<Mutex<Graphics>>,
+    graphics: Arc<GraphicsContext>,
     openvr_backend: Arc<Mutex<OpenvrBackend>>,
     shutdown_signal_sender: Sender<ShutdownSignal>,
     shutdown_signal_receiver: Receiver<ShutdownSignal>,
@@ -133,17 +135,15 @@ fn begin_server_loop(
             }
 
             let (present_producer, present_consumer) = queue_channel_split();
-            let sync_handle_mutex = Arc::new(Mutex::new(()));
 
             let mut compositor = Compositor::new(
                 graphics.clone(),
-                CompositorSettings {
+                CompositorDesc {
                     target_eye_resolution,
                     filter_type: settings.video.composition_filtering,
                     ffr_desc: settings.video.foveated_rendering.clone().into_option(),
                 },
                 present_consumer,
-                sync_handle_mutex.clone(),
                 slice_producers,
             )?;
 
@@ -158,7 +158,6 @@ fn begin_server_loop(
                     settings.video.encoder.clone(),
                     video_encoder_resolution,
                     client_handshake_packet.fps,
-                    graphics.lock().device_ptr(),
                     slice_consumer,
                     video_packet_producer,
                 )?);
@@ -208,7 +207,6 @@ fn begin_server_loop(
                     &settings,
                     session_desc_loader.lock().get_mut(),
                     present_producer,
-                    sync_handle_mutex,
                     {
                         let connection_manager = connection_manager.clone();
                         move |haptic_data| {
@@ -288,21 +286,19 @@ fn begin_server_loop(
         .map(|_| ()))
 }
 
-// To make a minimum system, BridgeVR needs to instantiate Compositor and OpenvrServer.
+// To make a minimum system, BridgeVR needs to instantiate OpenvrServer.
 // This means that most OpenVR related settings cannot be changed while the driver is running.
 // OpenvrServer needs to be instantiated statically because if it get destroyed SteamVR will find
 // invalid pointers.
 // Avoid crashing or returning errors, otherwise SteamVR would complain that there is no HMD.
 // If get_settings() returns an error, create the OpenVR server anyway, even if it remains in an
-// unusable state. If the compositor can't be created, there is nothing to do and HmdFactory
-// will return a null pointer.
-
-type Temp<T> = Arc<Mutex<Option<T>>>;
+// unusable state.
 
 struct EmptySystem {
-    graphics: Arc<Mutex<Graphics>>,
+    graphics: Arc<GraphicsContext>,
     openvr_backend: Arc<Mutex<OpenvrBackend>>,
-    shutdown_signal_channel_temp: Temp<(Sender<ShutdownSignal>, Receiver<ShutdownSignal>)>,
+    shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
+    shutdown_signal_receiver_temp: Arc<Mutex<Option<Receiver<ShutdownSignal>>>>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 }
 
@@ -313,24 +309,22 @@ fn create_empty_system() -> StrResult<EmptySystem> {
 
     let session_desc_loader = Arc::new(Mutex::new(SessionDescLoader::load(env!("SESSION_PATH"))));
 
-    let graphics = Arc::new(Mutex::new(Graphics::new()?));
+    let graphics = Arc::new(GraphicsContext::new(None)?);
 
     let (shutdown_signal_sender, shutdown_signal_receiver) = mpsc::channel();
 
     let openvr_backend = Arc::new(Mutex::new(OpenvrBackend::new(
+        graphics.clone(),
         maybe_settings.as_ref(),
         &session_desc_loader.lock().get_mut(),
-        graphics.clone(),
         shutdown_signal_sender.clone(),
     )));
 
     Ok(EmptySystem {
         graphics,
         openvr_backend,
-        shutdown_signal_channel_temp: Arc::new(Mutex::new(Some((
-            shutdown_signal_sender,
-            shutdown_signal_receiver,
-        )))),
+        shutdown_signal_sender: Arc::new(Mutex::new(shutdown_signal_sender)),
+        shutdown_signal_receiver_temp: Arc::new(Mutex::new(Some(shutdown_signal_receiver))),
         session_desc_loader,
     })
 }
@@ -339,18 +333,16 @@ openvr_server_entry_point!({
     logging_backend::init_logging();
 
     lazy_static! {
-        static ref EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
+        static ref MAYBE_EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
     }
 
-    show_err!(EMPTY_SYSTEM.as_ref()).map(|sys| {
-        // this unwrap is safe because `shutdown_signal_channel_temp` has just been set
-        let (shutdown_signal_sender, shutdown_signal_receiver) =
-            sys.shutdown_signal_channel_temp.lock().take().unwrap();
+    show_err!(MAYBE_EMPTY_SYSTEM.as_ref()).map(|sys| {
         show_err!(begin_server_loop(
             sys.graphics.clone(),
             sys.openvr_backend.clone(),
-            shutdown_signal_sender,
-            shutdown_signal_receiver,
+            sys.shutdown_signal_sender.lock().clone(),
+            // this unwrap is safe because `shutdown_signal_receiver_temp` has just been set
+            sys.shutdown_signal_receiver_temp.lock().take().unwrap(),
             sys.session_desc_loader.clone()
         ))
         .ok();

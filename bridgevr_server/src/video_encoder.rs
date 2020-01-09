@@ -1,4 +1,4 @@
-use crate::{compositor::*};
+use crate::compositor::*;
 use bridgevr_common::{
     data::VideoEncoderDesc,
     ring_channel::*,
@@ -30,7 +30,6 @@ impl VideoEncoder {
         settings: VideoEncoderDesc,
         resolution: (u32, u32),
         frame_rate: u32,
-        graphics_device_ptr: u64,
         mut frame_consumer: Consumer<FrameSlice>,
         mut packet_producer: Producer<SenderData>,
     ) -> StrResult<Self> {

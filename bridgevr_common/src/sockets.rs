@@ -198,7 +198,7 @@ impl<SM> ConnectionManager<SM> {
     ) -> StrResult<Self> {
         let message_received_callback = Arc::new(Mutex::new(message_received_callback));
         trace_err!(
-            bincode::serialize_into(&client_candidate_desc.tcp_message_socket, &handshake_packet,),
+            bincode::serialize_into(&client_candidate_desc.tcp_message_socket, &handshake_packet),
             "Handshake packet send"
         )?;
 

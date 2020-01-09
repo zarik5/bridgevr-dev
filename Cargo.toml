@@ -1,10 +1,8 @@
 [workspace]
 members = [
-    # "nvidia-video-codec-sdk-sys",
     # "openvr-driver",
     "bridgevr_common",
     # "bridgevr_client",
     "bridgevr_server",
     # "playground",
-    # "openvr-driver-sys",
 ]

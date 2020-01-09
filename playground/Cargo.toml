@@ -6,9 +6,3 @@ license = 'MIT'
 edition = '2018'
 
 [dependencies]
-cpal = { git = "https://github.com/RustAudio/cpal" }
-anyhow = "1.0.23"
-bridgevr_common = { path = '../bridgevr_common', features = ['vulkan'] }
-
-[target."cfg(windows)".dependencies]
-# cpal = { version = "0.10.0", features = ['asio]']

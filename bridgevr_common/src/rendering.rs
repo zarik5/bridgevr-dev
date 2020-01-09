@@ -1,4 +1,5 @@
 use crate::{constants::BVR_NAME, StrResult};
+pub use gfx_hal::format::Format;
 use gfx_hal::{
     adapter::MemoryType,
     buffer,
@@ -15,13 +16,19 @@ use gfx_hal::{
     *,
 };
 use log::{debug, error};
-use parking_lot::Mutex;
+use parking_lot::*;
 use std::{
-    any::TypeId, ffi::c_void, fmt::Debug, iter, marker::PhantomData, mem::ManuallyDrop, mem::*,
-    ptr, sync::Arc, time::Duration,
+    any::TypeId,
+    ffi::c_void,
+    fmt::Debug,
+    iter,
+    marker::PhantomData,
+    mem::ManuallyDrop,
+    mem::*,
+    ptr,
+    sync::{atomic::*, Arc},
+    time::Duration,
 };
-
-pub use gfx_hal::format::Format;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use gfx_backend_vulkan as back;
@@ -51,6 +58,11 @@ macro_rules! addr_of {
     };
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn format_from_native(vulkan_format: u32) -> Format {
+    todo!();
+}
+
 #[cfg(windows)]
 pub fn format_from_native(dxgi_format: u32) -> Format {
     use winapi::shared::dxgiformat::*;
@@ -59,39 +71,6 @@ pub fn format_from_native(dxgi_format: u32) -> Format {
         DXGI_FORMAT_R8G8B8A8_UNORM_SRGB => Format::Rgba8Srgb,
         _ => Format::Rgba8Unorm,
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn format_from_native(dxgi_format: u32) -> Format {
-    todo!();
-}
-
-pub struct TextureGuard {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    ptr: ash::vk::Image,
-
-    #[cfg(windows)]
-    ptr: wio::com::ComPtr<winapi::um::d3d11::ID3D11Texture2D>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn lock_texture_from_handle(handle: u64, timeout: Duration) -> StrResult<TextureGuard> {
-    todo!()
-}
-
-#[cfg(windows)]
-pub fn lock_texture_from_handle(handle: u64, timeout: Duration) -> StrResult<TextureGuard> {
-    todo!()
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn unlock_texture(texture_guard: TextureGuard) {
-    todo!()
-}
-
-#[cfg(windows)]
-pub fn unlock_texture(texture_guard: TextureGuard) {
-    todo!()
 }
 
 #[derive(Clone, Copy)]
@@ -124,9 +103,8 @@ pub enum OperationDesc {
     },
 }
 
-// Graphics abstraction layer 2D
-// Expose a higher level API for 2D post-processing using shaders
-pub struct GraphicsAbstractionLayer {
+// Abstraction layer for graphics instance, device and context.
+pub struct GraphicsContext {
     instance: InstanceImpl,
     physical_device: PhysicalDeviceImpl,
     device: DeviceImpl,
@@ -135,7 +113,7 @@ pub struct GraphicsAbstractionLayer {
     limits: Limits,
 }
 
-impl GraphicsAbstractionLayer {
+impl GraphicsContext {
     pub fn new(adapter_index: Option<usize>) -> StrResult<Self> {
         let instance = trace_err!(back::Instance::create(BVR_NAME, 1))?;
 
@@ -143,8 +121,8 @@ impl GraphicsAbstractionLayer {
         let adapter_index = adapter_index.unwrap_or(0);
 
         debug!("Selecting graphics adapter {} of:", adapter_index);
-        for i in 0..adapters.len() {
-            debug!("{}: {:?}", i, adapters[i].info);
+        for (i, adapter) in adapters.iter().enumerate() {
+            debug!("{}: {:?}", i, adapter.info);
         }
         let adapter = adapters.remove(adapter_index);
         let physical_device = adapter.physical_device;
@@ -163,7 +141,7 @@ impl GraphicsAbstractionLayer {
         let device = gpu.device;
         let queue_group = trace_none!(gpu.queue_groups.pop())?;
 
-        Ok(GraphicsAbstractionLayer {
+        Ok(GraphicsContext {
             instance,
             physical_device,
             device,
@@ -173,8 +151,16 @@ impl GraphicsAbstractionLayer {
         })
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_device_ptr(device_ptr: u64) -> StrResult<Self> {
+    #[cfg(target_os = "linux")]
+    pub fn from_vulkan_ptrs(
+        instance_ptr: u64,
+        physical_device_ptr: u64,
+        logical_device_ptr: u64,
+        queue_ptr: u64,
+        queue_family_index: u32,
+    ) -> StrResult<Self> {
+        // NB: vkImage/ash::vk::Image is u64 or *mut vkImage_T
+
         todo!();
     }
 
@@ -192,17 +178,7 @@ impl GraphicsAbstractionLayer {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn physical_device_ptr(&self) -> u64 {
-        use ash::vk::{self, Handle};
-
-        struct PhysicalDeviceMock {
-            _instance: Arc<back::RawInstance>,
-            handle: vk::PhysicalDevice,
-        }
-
-        // todo: remove transmute if gfx will support accessing raw handle
-        let physical_device_mock: &PhysicalDeviceMock =
-            unsafe { &*(&self.physical_device as *const _ as *const _) };
-        physical_device_mock.handle.as_raw()
+        todo!()
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -210,8 +186,7 @@ impl GraphicsAbstractionLayer {
         use ash::vk::Handle;
 
         // Backend::Device has a field raw but it is private.
-        // Extracting the memory with transmute
-        // todo: remove transmute if gfx will support accessing raw handle
+        // todo: mod gfx-hal crate to access private fields
         let raw: &Arc<gfx_backend_vulkan::RawDevice> =
             unsafe { &*(&self.device as *const _ as *const _) };
         raw.0.handle().as_raw()
@@ -222,9 +197,19 @@ impl GraphicsAbstractionLayer {
         use winapi::um::d3d11;
         use wio::com::ComPtr;
 
-        // todo: remove transmute if gfx will support accessing raw handle
+        // todo: mod gfx-hal crate to access private fields
         let raw: &ComPtr<d3d11::ID3D11Device> = unsafe { &*(&self.device as *const _ as *const _) };
         raw.as_raw() as _
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn queue_ptr(&self) -> u64 {
+        todo!()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn queue_family_index(&self) -> u32 {
+        todo!()
     }
 }
 
@@ -240,17 +225,17 @@ impl GraphicsAbstractionLayer {
 // }
 
 pub struct UniformBuffer {
-    graphics_al: Arc<GraphicsAbstractionLayer>,
+    graphics: Arc<GraphicsContext>,
     buffer_handle: ManuallyDrop<BufferImpl>,
     buffer_memory: ManuallyDrop<MemoryImpl>,
     struct_type: TypeId,
 }
 
 impl UniformBuffer {
-    pub fn new<T: 'static>(graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
-        let dev = &graphics_al.device;
+    pub fn new<T: 'static>(graphics: Arc<GraphicsContext>) -> StrResult<Self> {
+        let dev = &graphics.device;
 
-        let non_coherent_alignment = graphics_al.limits.non_coherent_atom_size;
+        let non_coherent_alignment = graphics.limits.non_coherent_atom_size;
         let buffer_length = ((size_of::<T>() + non_coherent_alignment - 1)
             / non_coherent_alignment)
             * non_coherent_alignment;
@@ -261,7 +246,7 @@ impl UniformBuffer {
         let buffer_requirements = unsafe { dev.get_buffer_requirements(&buffer_handle) };
 
         let mem_type_id =
-            trace_none!(graphics_al
+            trace_none!(graphics
                 .memory_types
                 .iter()
                 .enumerate()
@@ -280,7 +265,7 @@ impl UniformBuffer {
         });
 
         Ok(UniformBuffer {
-            graphics_al,
+            graphics,
             buffer_handle,
             buffer_memory,
             struct_type: TypeId::of::<T>(),
@@ -295,19 +280,19 @@ impl UniformBuffer {
         let data_size = size_of::<T>();
         unsafe {
             let mapping = trace_err!(self
-                .graphics_al
+                .graphics
                 .device
                 .map_memory(&self.buffer_memory, 0..data_size as _))?;
 
             ptr::copy_nonoverlapping(data as *const _ as *const u8, mapping, data_size);
 
             // do not early return if flush fails because the buffer memory must be unmapped
-            self.graphics_al
+            self.graphics
                 .device
                 .flush_mapped_memory_ranges(iter::once((&*self.buffer_memory, 0..data_size as _)))
                 .map_err(|e| error!("[Graphics] Buffer map flush: {}", e))
                 .ok();
-            self.graphics_al.device.unmap_memory(&self.buffer_memory);
+            self.graphics.device.unmap_memory(&self.buffer_memory);
         }
         Ok(())
     }
@@ -323,33 +308,38 @@ impl Drop for UniformBuffer {
 }
 
 pub struct Texture {
-    graphics_al: Arc<GraphicsAbstractionLayer>,
+    graphics: Arc<GraphicsContext>,
     image_handle: ManuallyDrop<ImageImpl>,
     image_memory: ManuallyDrop<MemoryImpl>,
     image_view: ManuallyDrop<ImageViewImpl>,
     resolution: (u32, u32),
     format: Format,
+    sample_count: u8,
+    sync_acquired: AtomicBool,
 }
 
 impl Texture {
     fn create_image_memory_view(
         mut image_handle: &mut ManuallyDrop<ImageImpl>,
-        graphics_al: Arc<GraphicsAbstractionLayer>,
+        graphics: Arc<GraphicsContext>,
         format: Format,
     ) -> StrResult<(ManuallyDrop<MemoryImpl>, ManuallyDrop<ImageViewImpl>)> {
-        let dev = &graphics_al.device;
+        let dev = &graphics.device;
 
         let image_requirements = unsafe { dev.get_image_requirements(&image_handle) };
 
-        let mem_type_id = trace_none!(graphics_al.memory_types.iter().enumerate().position(
-            |(id, memory_type)| {
-                image_requirements.type_mask & (1 << id) != 0
-                    && memory_type
-                        .properties
-                        .contains(memory::Properties::DEVICE_LOCAL)
-            }
-        ))?
-        .into();
+        let mem_type_id =
+            trace_none!(graphics
+                .memory_types
+                .iter()
+                .enumerate()
+                .position(|(id, memory_type)| {
+                    image_requirements.type_mask & (1 << id) != 0
+                        && memory_type
+                            .properties
+                            .contains(memory::Properties::DEVICE_LOCAL)
+                }))?
+            .into();
 
         let image_memory = ManuallyDrop::new(unsafe {
             let mem = trace_err!(dev.allocate_memory(mem_type_id, image_requirements.size))?;
@@ -375,14 +365,13 @@ impl Texture {
     }
 
     pub fn new(
-        graphics_al: Arc<GraphicsAbstractionLayer>,
+        graphics: Arc<GraphicsContext>,
         (width, height): (u32, u32),
         format: Format,
-        sample_count: Option<u8>,
+        sample_count: u8,
     ) -> StrResult<Self> {
-        let dev = &graphics_al.device;
+        let dev = &graphics.device;
 
-        let sample_count = sample_count.unwrap_or(1);
         let kind = Kind::D2(width, height, /*layers*/ 1, sample_count);
         //todo check usage bits
         let usage = image::Usage::SAMPLED | image::Usage::STORAGE | image::Usage::COLOR_ATTACHMENT;
@@ -399,40 +388,49 @@ impl Texture {
         })?);
 
         let (image_memory, image_view) =
-            Texture::create_image_memory_view(&mut image_handle, graphics_al.clone(), format)?;
+            Texture::create_image_memory_view(&mut image_handle, graphics.clone(), format)?;
 
         Ok(Self {
-            graphics_al,
+            graphics,
             image_handle,
             image_memory,
             image_view,
             resolution: (width, height),
             format,
+            sample_count,
+            sync_acquired: AtomicBool::new(false),
         })
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_handle(handle: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
-        trace_str!("Cannot create image from handle")
+    pub fn graphics(&self) -> &Arc<GraphicsContext> {
+        &self.graphics
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_handle_and_desc(
-        handle: u64,
-        graphics_al: Arc<GraphicsAbstractionLayer>,
+    pub fn from_shared_vulkan_ptrs(
+        image_ptr: u64,
+        graphics: Arc<GraphicsContext>,
+        other_instance_ptr: u64,
+        other_physical_device: u64,
+        other_device: u64,
+        other_queue: u64,
+        other_queue_family_index: u32,
         (width, height): (u32, u32),
         format: Format,
+        sample_count: u8,
     ) -> StrResult<Self> {
+        // todo: error if instance or physical device differs from graphics al
+
         todo!();
     }
 
     #[cfg(windows)]
-    pub fn from_handle(handle: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
+    pub fn from_handle(handle: u64, graphics: Arc<GraphicsContext>) -> StrResult<Self> {
         todo!();
     }
 
     #[cfg(windows)]
-    pub fn from_ptr(ptr: u64, graphics_al: Arc<GraphicsAbstractionLayer>) -> StrResult<Self> {
+    pub fn from_ptr(ptr: u64, graphics: Arc<GraphicsContext>) -> StrResult<Self> {
         todo!();
     }
 
@@ -448,7 +446,7 @@ impl Texture {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn as_handle(&self) -> u64 {
-        self.as_ptr()
+        todo!();
     }
 
     #[cfg(windows)]
@@ -463,6 +461,33 @@ impl Texture {
     pub fn write(&self, data: Vec<u8>) -> StrResult {
         todo!();
     }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn acquire_sync(&self, timeout: Duration) -> StrResult {
+        todo!();
+    }
+
+    #[cfg(windows)]
+    pub fn acquire_sync(&self, timeout: Duration) -> StrResult {
+        todo!();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn release_sync(&self) {
+        todo!();
+    }
+
+    #[cfg(windows)]
+    pub fn release_sync(&self) {
+        todo!();
+    }
+}
+
+impl PartialEq for Texture {
+    fn eq(&self, other: &Self) -> bool {
+        todo!();
+        // self.handle == other.handle
+    }
 }
 
 impl Drop for Texture {
@@ -475,12 +500,11 @@ impl Drop for Texture {
     }
 }
 
-// including Graphics2DAbstractionLayer inside Texture ensures that image is destroyed before the device
 // impl Drop for Texture {
 //     fn drop(&mut self) {
-//         if self.graphics_al.device.wait_idle().is_ok() {
+//         if self.graphics.device.wait_idle().is_ok() {
 //             unsafe {
-//                 self.graphics_al
+//                 self.graphics
 //                     .device
 //                     .destroy_image(ManuallyDrop::into_inner(ptr::read(&mut self.image)));
 //                 // todo: use ManuallyDrop::read/take when stabilized
@@ -489,14 +513,8 @@ impl Drop for Texture {
 //     }
 // }
 
-// enum Operation {
-//     RenderPass(<back::Backend as gfx_hal::Backend>::RenderPass),
-//     FillBuffer,
-//     WaitForTexture,
-// }
-
 pub struct OperationBuffer {
-    graphics_al: Arc<GraphicsAbstractionLayer>,
+    graphics: Arc<GraphicsContext>,
     // command_pool: ManuallyDrop<CommandPool<back::Backend, Graphics>>,
     // command_buffer: ManuallyDrop<CommandBuffer<back::Backend, Graphics, MultiShot>>,
     // render_passes: Vec<<back::Backend as gfx_hal::Backend>::RenderPass>,
@@ -506,14 +524,14 @@ pub struct OperationBuffer {
 
 impl OperationBuffer {
     pub fn new(
-        graphics_al: Arc<GraphicsAbstractionLayer>,
+        graphics: Arc<GraphicsContext>,
         operation_descs: &[OperationDesc],
     ) -> StrResult<OperationBuffer> {
-        let dev = &graphics_al.device;
+        let dev = &graphics.device;
 
         let mut command_pool = ManuallyDrop::new(trace_err!(unsafe {
             dev.create_command_pool(
-                graphics_al.queue_group.family,
+                graphics.queue_group.family,
                 CommandPoolCreateFlags::RESET_INDIVIDUAL,
             )
         })?);
@@ -596,11 +614,11 @@ impl OperationBuffer {
         // command_buffer.begin_render_pass_inline (
         // )
 
-        // let fence = graphics_al
+        // let fence = graphics
         //     .device
         //     .create_fence(/*signaled*/ true)
         //     .unwrap();
-        // let semaphore = graphics_al.device.create_semaphore().unwrap();
+        // let semaphore = graphics.device.create_semaphore().unwrap();
 
         // let render_pass = {
         //     let color_attachment = Attachment {
@@ -622,7 +640,7 @@ impl OperationBuffer {
         //     };
 
         //     unsafe {
-        //         ok_or_panic!(graphics_al.device.create_render_pass(
+        //         ok_or_panic!(graphics.device.create_render_pass(
         //             &[color_attachment],
         //             &[subpass],
         //             &[/*subpass dependency*/],
@@ -643,7 +661,7 @@ impl OperationBuffer {
         //     },
         // ), "Image view");
 
-        // let framebuffer = ok_or_panic!(graphics_al.device.create_framebuffer(
+        // let framebuffer = ok_or_panic!(graphics.device.create_framebuffer(
         //     &render_pass,
         //     vec![image_view],
         //     Extent {
@@ -656,7 +674,7 @@ impl OperationBuffer {
         todo!();
 
         // Self {
-        //     graphics_al,
+        //     graphics,
         //     command_pool,
         //     command_buffer,
         //     fences,
@@ -672,15 +690,15 @@ impl OperationBuffer {
 
 // impl Drop for OperationBuffer {
 //     fn drop(&mut self) {
-//         if self.graphics_al.device.wait_idle().is_ok() {
+//         if self.graphics.device.wait_idle().is_ok() {
 //             unsafe {
 //                 // for f in self.fences.drain(..) {
-//                 //     self.graphics_al.device.destroy_fence(f);
+//                 //     self.graphics.device.destroy_fence(f);
 //                 // }
 
 //                 // let command_buffer = ManuallyDrop::into_inner(ptr::read(&mut self.command_buffer));
 
-//                 // self.graphics_al.device.destroy_command_pool(
+//                 // self.graphics.device.destroy_command_pool(
 //                 //     ManuallyDrop::into_inner(ptr::read(&mut self.command_pool)).into_raw(),
 //                 // );
 //             }

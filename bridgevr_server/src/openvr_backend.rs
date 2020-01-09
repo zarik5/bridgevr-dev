@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
 use bridgevr_common::{data::*, input_mapping::*, rendering::*, ring_channel::*};
 use log::*;
@@ -11,6 +13,12 @@ use std::{
 };
 
 const TIMEOUT: Duration = Duration::from_millis(500);
+
+const SWAP_TEXTURE_SET_SIZE: usize = 3;
+
+const VIRTUAL_DISPLAY_MAX_TEXTURES: usize = 3;
+
+const DEFAULT_COMPOSITOR_TYPE: CompositorType = CompositorType::Custom;
 
 const DEFAULT_EYE_RESOLUTION: (u32, u32) = (640, 720);
 
@@ -103,6 +111,32 @@ fn create_openvr_settings(
     settings: Option<&Settings>,
     session_desc: &SessionDesc,
 ) -> OpenvrSettings {
+    let block_standby;
+    let hmd_custom_properties;
+    let controllers_custom_properties;
+    let input_mapping;
+    if let Some(settings) = settings {
+        block_standby = settings.openvr.block_standby;
+        hmd_custom_properties = settings.openvr.hmd_custom_properties.clone();
+        controllers_custom_properties = settings.openvr.controllers_custom_properties.clone();
+        input_mapping = settings.openvr.input_mapping.clone();
+    } else {
+        block_standby = DEFAULT_BLOCK_STANDBY;
+        hmd_custom_properties = vec![];
+        controllers_custom_properties = [vec![], vec![]];
+        input_mapping = [vec![], vec![]];
+    };
+
+    let fov;
+    let frame_interval;
+    if let Some(client_handshake_packet) = &session_desc.last_client_handshake_packet {
+        fov = client_handshake_packet.fov;
+        frame_interval = Duration::from_secs_f32(1_f32 / client_handshake_packet.fps as f32);
+    } else {
+        fov = DEFAULT_FOV;
+        frame_interval = DEFAULT_FRAME_INTERVAL;
+    };
+
     let target_eye_resolution = if let Some(Settings {
         openvr:
             OpenvrDesc {
@@ -117,43 +151,6 @@ fn create_openvr_settings(
         client_handshake_packet.native_eye_resolution
     } else {
         DEFAULT_EYE_RESOLUTION
-    };
-
-    let fov = if let Some(client_handshake_packet) = &session_desc.last_client_handshake_packet {
-        client_handshake_packet.fov
-    } else {
-        DEFAULT_FOV
-    };
-
-    let block_standby = if let Some(settings) = settings {
-        settings.openvr.block_standby
-    } else {
-        DEFAULT_BLOCK_STANDBY
-    };
-
-    let frame_interval =
-        if let Some(client_handshake_packet) = &session_desc.last_client_handshake_packet {
-            Duration::from_secs_f32(1_f32 / client_handshake_packet.fps as f32)
-        } else {
-            DEFAULT_FRAME_INTERVAL
-        };
-
-    let hmd_custom_properties = if let Some(settings) = settings {
-        settings.openvr.hmd_custom_properties.clone()
-    } else {
-        vec![]
-    };
-
-    let controllers_custom_properties = if let Some(settings) = settings {
-        settings.openvr.controllers_custom_properties.clone()
-    } else {
-        [vec![], vec![]]
-    };
-
-    let input_mapping = if let Some(settings) = settings {
-        settings.openvr.input_mapping.clone()
-    } else {
-        [vec![], vec![]]
     };
 
     OpenvrSettings {
@@ -175,16 +172,22 @@ fn should_restart(old_settings: &OpenvrSettings, new_settings: &OpenvrSettings) 
 // The "contexts" are the structs given to the openvr callbacks and are internally mutable.
 // Using internal mutability enables the callbacks to use the contexts concurrently.
 
+#[derive(Default)]
+struct AuxiliaryTextureData(#[cfg(target_os = "linux")] vr::VRVulkanTextureData_t);
+
+unsafe impl Send for AuxiliaryTextureData {}
+unsafe impl Sync for AuxiliaryTextureData {}
+
 struct HmdContext {
     id: Mutex<Option<u32>>,
     settings: Arc<Mutex<OpenvrSettings>>,
-    graphics: Arc<Mutex<Graphics>>,
+    graphics: Arc<GraphicsContext>,
+    swap_texture_manager: Mutex<SwapTextureManager<AuxiliaryTextureData>>,
     present_producer: Mutex<Option<Producer<PresentData>>>,
-    sync_handle_mutex: Mutex<Option<Arc<Mutex<()>>>>,
+    current_layers: Mutex<Vec<([(Arc<Texture>, TextureBounds); 2], Pose)>>,
+    current_sync_texture_mutex: Mutex<Option<Arc<SpinLockableMutex>>>,
     pose: Mutex<vr::DriverPose_t>,
     latest_vsync: Mutex<(Instant, u64)>,
-    swap_texture_sets_desc: Mutex<Vec<(usize, [u64; 3], u32)>>,
-    current_layers: Mutex<Vec<LayerDesc>>,
     shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
 }
 
@@ -239,12 +242,59 @@ fn update_vsync(context: &Arc<HmdContext>) {
     *vsync_index += 1;
 }
 
+fn get_texture_handle(vr_handle: vr::SharedTextureHandle_t) -> u64 {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        (*(vr_handle as *mut vr::VRVulkanTextureData_t)).m_nImage
+    }
+    #[cfg(not(target_os = "linux"))]
+    vr_handle
+}
+
 fn create_virtual_display_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::VirtualDisplayCallbacks<HmdContext> {
     vr::VirtualDisplayCallbacks {
         context: hmd_context,
         present: |context, present_info| {
+            let handle = get_texture_handle(present_info.backbufferTextureHandle);
+
+            let maybe_texture = context.swap_texture_manager.lock().get(handle).or_else(|| {
+                #[cfg(target_os = "linux")]
+                let maybe_texture = {
+                    let data = unsafe {
+                        *(present_info.backbufferTextureHandle as *mut VRVulkanTextureData_t)
+                    };
+
+                    let format = format_from_native(data.m_nFormat);
+                    Texture::from_shared_vulkan_ptrs(
+                        data.m_nImage,
+                        context.graphics.clone(),
+                        data.m_pInstance as _,
+                        data.m_pPhysicalDevice as _,
+                        data.m_pDevice as _,
+                        data.m_pQueue as _,
+                        data.m_nQueueFamilyIndex,
+                        (data.m_nWidth, data.m_nHeight),
+                        format,
+                        data.m_nSampleCount as _,
+                    )
+                    .map(Arc::new)
+                };
+                #[cfg(not(target_os = "linux"))]
+                let maybe_texture =
+                    Texture::from_handle(handle, context.graphics.clone()).map(Arc::new);
+
+                if let Ok(texture) = maybe_texture.as_ref().map_err(|e| debug!("{}", e)) {
+                    context
+                        .swap_texture_manager
+                        .lock()
+                        .add_single(texture.clone());
+                }
+
+                maybe_texture.ok()
+            });
+
             // this function returns a number of frame timings <= frame_count.
             // frame_count is choosen == 2 > 1 to compensate for missed frames.
             // todo: check if this function always return the latest n frame timings.
@@ -253,36 +303,62 @@ fn create_virtual_display_callbacks(
                 .iter()
                 .rev()
                 .find(|ft| ft.m_nFrameIndex == present_info.nFrameId as u32);
-            if let Some(frame_timing) = maybe_frame_timing {
+
+            if let (Some(texture), Some(frame_timing), Some(present_producer)) = (
+                &maybe_texture,
+                &maybe_frame_timing,
+                &mut *context.present_producer.lock(),
+            ) {
                 let pose =
                     pose_from_openvr_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
-                if let Some(present_producer) = &mut *context.present_producer.lock() {
-                    let res = present_producer
-                        .fill(TIMEOUT, |present_data| {
-                            let handle = present_info.backbufferTextureHandle;
-                            let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
-                            present_data.frame_index = present_info.nFrameId;
-                            present_data.layers =
-                                vec![([(handle, left_bounds), (handle, right_bounds)], pose)];
-                            present_data.sync_texture_handle = handle;
-                            Ok(())
-                        })
-                        .map_err(|e| debug!("{:?}", e));
-                    if res.is_ok() {
-                        present_producer
-                            .wait_for_one(TIMEOUT)
-                            .map_err(|e| debug!("{:?}", e))
-                            .ok();
-                    }
+
+                if present_producer.added_count() == 0 {
+                    present_producer.add(PresentData {
+                        frame_index: 0,
+                        layers: vec![],
+                        sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
+                        sync_texture: texture.clone(),
+                        force_idr_slice_idxs: vec![],
+                    });
                 }
-            } else {
+
+                let res = present_producer
+                    .fill(TIMEOUT, |present_data| {
+                        let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
+                        present_data.frame_index = present_info.nFrameId;
+                        present_data.layers = vec![(
+                            [
+                                (texture.clone(), left_bounds),
+                                (texture.clone(), right_bounds),
+                            ],
+                            pose,
+                        )];
+                        present_data.sync_texture = texture.clone();
+                        // NB: this lock is for writing in the contaner for the mutex
+                        *context.current_sync_texture_mutex.lock() =
+                            Some(present_data.sync_texture_mutex.clone());
+
+                        // todo force_idr
+
+                        Ok(())
+                    })
+                    .map_err(|e| debug!("{:?}", e));
+                if res.is_ok() {
+                    present_producer
+                        .wait_for_one(TIMEOUT)
+                        .map_err(|e| debug!("{:?}", e))
+                        .ok();
+                }
+            } else if maybe_frame_timing.is_none() {
                 debug!("frame timing not found");
             }
         },
         wait_for_present: |context| {
-            // When the compositor has finished using the sync texture handle, this lock can
-            // be taken and the callback can returns.
-            let _ = context.sync_handle_mutex.lock();
+            if let Some(sync_texture_mutex) = context.current_sync_texture_mutex.lock().take() {
+                if !sync_texture_mutex.wait_for_unlock(TIMEOUT) {
+                    debug!("Sync texture has not been unlocked");
+                }
+            };
 
             update_vsync(&context);
         },
@@ -304,55 +380,58 @@ fn create_driver_direct_mode_callbacks(
         create_swap_texture_set: |context, pid, swap_texture_set_desc, shared_texture_handles| {
             let format = format_from_native(swap_texture_set_desc.nFormat);
             let maybe_swap_texture_set = context
-                .graphics
+                .swap_texture_manager
                 .lock()
-                .create_swap_texture_set(
+                .create_set(
+                    SWAP_TEXTURE_SET_SIZE,
                     (swap_texture_set_desc.nWidth, swap_texture_set_desc.nHeight),
                     format,
                     swap_texture_set_desc.nSampleCount as _,
+                    pid,
                 )
                 .map_err(|e| error!("{}", e));
 
-            if let Ok((id, handles)) = maybe_swap_texture_set {
-                context
-                    .swap_texture_sets_desc
-                    .lock()
-                    .push((id, handles, pid));
-                *shared_texture_handles = handles;
+            if let Ok((_, data)) = maybe_swap_texture_set {
+                #[cfg(target_os = "linux")]
+                let shared_texture_handles_vec: Vec<_> = {
+                    let instance_ptr = context.graphics.instance_ptr();
+                    let physical_device_ptr = context.graphics.physical_device_ptr();
+                    let device_ptr = context.graphics.device_ptr();
+                    let queue_ptr = context.graphics.queue_ptr();
+                    let queue_family_index = context.graphics.queue_family_index();
+
+                    data.iter()
+                        .map(|(handle, storage)| {
+                            let AuxiliaryTextureData(vulkan_data) = &mut *storage.lock();
+
+                            vulkan_data.m_nImage = *handle;
+                            vulkan_data.m_pInstance = instance_ptr as _;
+                            vulkan_data.m_pPhysicalDevice = physical_device_ptr as _;
+                            vulkan_data.m_pDevice = device_ptr as _;
+                            vulkan_data.m_pQueue = queue_ptr as _;
+                            vulkan_data.m_nQueueFamilyIndex = queue_family_index;
+                            vulkan_data as *mut _ as u64
+                        })
+                        .collect()
+                };
+                #[cfg(not(target_os = "linux"))]
+                let shared_texture_handles_vec: Vec<_> =
+                    data.iter().map(|(handle, _)| *handle).collect();
+
+                shared_texture_handles.copy_from_slice(&shared_texture_handles_vec);
             }
         },
         destroy_swap_texture_set: |context, shared_texture_handle| {
-            let mut swap_texture_sets_desc = context.swap_texture_sets_desc.lock();
-            let maybe_set_desc_idx = swap_texture_sets_desc
-                .iter()
-                .position(|(_, handles, _)| handles.contains(&shared_texture_handle));
-            if let Some(idx) = maybe_set_desc_idx {
-                let (id, _, _) = swap_texture_sets_desc.remove(idx);
-                context
-                    .graphics
-                    .lock()
-                    .destroy_swap_texture_set(id)
-                    .map_err(|e| debug!("{}", e))
-                    .ok();
-            }
+            context
+                .swap_texture_manager
+                .lock()
+                .destroy_set_with_handle(get_texture_handle(shared_texture_handle));
         },
         destroy_all_swap_texture_sets: |context, pid| {
-            let mut swap_texture_sets_desc = context.swap_texture_sets_desc.lock();
-            let set_desc_idxs: Vec<_> = swap_texture_sets_desc
-                .iter()
-                .enumerate()
-                .filter(|(_, (_, _, p))| *p == pid)
-                .map(|(i, _)| i)
-                .collect();
-            for idx in set_desc_idxs {
-                let (id, _, _) = swap_texture_sets_desc.remove(idx);
-                context
-                    .graphics
-                    .lock()
-                    .destroy_swap_texture_set(id)
-                    .map_err(|e| debug!("{}", e))
-                    .ok();
-            }
+            context
+                .swap_texture_manager
+                .lock()
+                .destroy_sets_with_pid(pid);
         },
         get_next_swap_texture_set_index: |_, _shared_texture_handles, indices| {
             // shared_texture_handles can be ignored because there is always only one texture per
@@ -362,7 +441,7 @@ fn create_driver_direct_mode_callbacks(
             }
         },
         submit_layer: |context, per_eye, pose| {
-            let layer_per_eye: Vec<_> = per_eye
+            let eyes_layer_data: Vec<_> = per_eye
                 .iter()
                 .map(|eye_layer| {
                     let b = eye_layer.bounds;
@@ -372,22 +451,48 @@ fn create_driver_direct_mode_callbacks(
                         u_max: b.uMax,
                         v_max: b.vMax,
                     };
-                    (eye_layer.hTexture, bounds)
+                    let texture = context.swap_texture_manager.lock().get(eye_layer.hTexture);
+                    (texture, bounds)
                 })
                 .collect();
             let pose = pose_from_openvr_matrix(pose);
-            context
-                .current_layers
-                .lock()
-                .push(([layer_per_eye[0], layer_per_eye[1]], pose));
+
+            if let ((Some(left_texture), left_bounds), (Some(right_texture), right_bounds)) =
+                (eyes_layer_data[0].clone(), eyes_layer_data[1].clone())
+            {
+                context.current_layers.lock().push((
+                    [(left_texture, left_bounds), (right_texture, right_bounds)],
+                    pose,
+                ));
+            }
         },
         present: |context, sync_texture| {
-            if let Some(present_producer) = &mut *context.present_producer.lock() {
+            let sync_handle = get_texture_handle(sync_texture);
+            if let (Some(present_producer), Some(sync_texture)) = (
+                &mut *context.present_producer.lock(),
+                &mut context.swap_texture_manager.lock().get(sync_handle),
+            ) {
+                if present_producer.added_count() == 0 {
+                    present_producer.add(PresentData {
+                        frame_index: 0,
+                        layers: vec![],
+                        sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
+                        sync_texture: sync_texture.clone(),
+                        force_idr_slice_idxs: vec![],
+                    });
+                }
+
                 let res = present_producer
                     .fill(TIMEOUT, |present_data| {
                         present_data.frame_index = context.latest_vsync.lock().1;
                         present_data.layers = context.current_layers.lock().drain(..).collect();
-                        present_data.sync_texture_handle = sync_texture;
+                        present_data.sync_texture = sync_texture.clone();
+                        // NB: this lock is for writing in the contaner for the mutex
+                        *context.current_sync_texture_mutex.lock() =
+                            Some(present_data.sync_texture_mutex.clone());
+
+                        // todo force_idr
+
                         Ok(())
                     })
                     .map_err(|e| debug!("{:?}", e));
@@ -400,10 +505,11 @@ fn create_driver_direct_mode_callbacks(
             }
         },
         post_present: |context| {
-            // use block to unlock mutex as soon as possible
-            {
-                let _ = context.sync_handle_mutex.lock();
-            }
+            if let Some(sync_texture_mutex) = context.current_sync_texture_mutex.lock().take() {
+                if !sync_texture_mutex.wait_for_unlock(TIMEOUT) {
+                    debug!("Sync texture has not been unlocked");
+                }
+            };
 
             update_vsync(&context);
 
@@ -604,35 +710,38 @@ fn create_server_callbacks(
     }
 }
 
-type HapticCallback = Box<dyn FnMut(HapticData) + Send>;
-
 pub struct OpenvrBackend {
     server: Arc<vr::ServerTrackedDeviceProvider<ServerContext>>,
     hmd_context: Arc<HmdContext>,
     controller_contexts: Vec<Arc<ControllerContext>>,
-    haptic_callback: Arc<Mutex<Option<HapticCallback>>>,
+    haptic_callback: Arc<Mutex<Option<Box<dyn FnMut(HapticData) + Send>>>>,
 }
 
 impl OpenvrBackend {
     pub fn new(
+        graphics: Arc<GraphicsContext>,
         settings: Option<&Settings>,
         session_desc: &SessionDesc,
-        graphics: Arc<Mutex<Graphics>>,
         shutdown_signal_sender: Sender<ShutdownSignal>,
     ) -> Self {
         let openvr_settings = Arc::new(Mutex::new(create_openvr_settings(settings, &session_desc)));
         let shutdown_signal_sender = Arc::new(Mutex::new(shutdown_signal_sender));
 
+        let swap_texture_manager = Mutex::new(SwapTextureManager::new(
+            graphics.clone(),
+            VIRTUAL_DISPLAY_MAX_TEXTURES,
+        ));
+
         let hmd_context = Arc::new(HmdContext {
             id: Mutex::new(None),
             settings: openvr_settings.clone(),
             graphics,
+            swap_texture_manager,
             present_producer: Mutex::new(None),
-            sync_handle_mutex: Mutex::new(None),
+            current_layers: Mutex::new(vec![]),
+            current_sync_texture_mutex: Mutex::new(None),
             pose: Mutex::new(DEFAULT_DRIVER_POSE),
             latest_vsync: Mutex::new((Instant::now(), 0)),
-            swap_texture_sets_desc: Mutex::new(vec![]),
-            current_layers: Mutex::new(vec![]),
             shutdown_signal_sender: shutdown_signal_sender.clone(),
         });
 
@@ -643,16 +752,9 @@ impl OpenvrBackend {
         hmd_components.display = Some(display_component);
 
         let compositor_type = if let Some(settings) = &settings {
-            if cfg!(target_os = "linux") {
-                if let CompositorType::SteamVR = settings.openvr.compositor_type {
-                    warn!("SteamVR compositor is not supported on linux. Using custom compositor.")
-                }
-                CompositorType::Custom
-            } else {
-                settings.openvr.compositor_type
-            }
+            settings.openvr.compositor_type
         } else {
-            CompositorType::Custom
+            DEFAULT_COMPOSITOR_TYPE
         };
 
         match compositor_type {
@@ -722,7 +824,6 @@ impl OpenvrBackend {
         settings: &Settings,
         session_desc: &SessionDesc,
         present_producer: Producer<PresentData>,
-        sync_handle_mutex: Arc<Mutex<()>>,
         haptic_callback: impl FnMut(HapticData) + Send + 'static,
     ) {
         // the same openvr settings instance is shared between hmd, controllers and server.
@@ -740,7 +841,6 @@ impl OpenvrBackend {
         } else {
             *self.hmd_context.settings.lock() = new_settings;
             *self.hmd_context.present_producer.lock() = Some(present_producer);
-            *self.hmd_context.sync_handle_mutex.lock() = Some(sync_handle_mutex);
             *self.haptic_callback.lock() = Some(Box::new(haptic_callback));
 
             // todo: notify settings changes to openvr using properties
@@ -749,7 +849,6 @@ impl OpenvrBackend {
 
     pub fn deinitialize_for_client(&mut self) {
         *self.hmd_context.present_producer.lock() = None;
-        *self.hmd_context.sync_handle_mutex.lock() = None;
         *self.haptic_callback.lock() = None;
     }
 
@@ -819,9 +918,9 @@ impl OpenvrBackend {
         }
 
         // todo: do this elsewhere?
-        while let Some(event) = unsafe { vr::server_driver_host_poll_next_event() } {
-            if event.eventType == vr::VREvent_Input_HapticVibration as u32 {
-                if let Some(callback) = &mut *self.haptic_callback.lock() {
+        if let Some(callback) = &mut *self.haptic_callback.lock() {
+            while let Some(event) = unsafe { vr::server_driver_host_poll_next_event() } {
+                if event.eventType == vr::VREvent_Input_HapticVibration as u32 {
                     for (i, ctx) in self.controller_contexts.iter().enumerate() {
                         let haptic = unsafe { event.data.hapticVibration };
                         if haptic.componentHandle == *ctx.haptic_component.lock() {
