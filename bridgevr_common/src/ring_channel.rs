@@ -69,17 +69,11 @@ pub struct Producer<V, K = ()> {
     sender: Sender<(K, V)>,
     receiver: Receiver<V>,
     queue: VecDeque<V>,
-    added_count: usize,
 }
 
 impl<K, V> Producer<V, K> {
     pub fn add(&mut self, empty: V) {
         self.queue.push_back(empty);
-        self.added_count += 1;
-    }
-
-    pub fn added_count(&self) -> usize {
-        self.added_count
     }
 
     pub fn wait_for_one(&mut self, timeout: Duration) -> RingBufResult {
@@ -235,7 +229,6 @@ fn ring_channel_split<V, K, C>(consumer_buffer: C) -> (Producer<V, K>, Consumer<
         receiver: producer_receiver,
         sender: producer_sender,
         queue: VecDeque::new(),
-        added_count: 0,
     };
     let consumer = Consumer {
         receiver: consumer_receiver,

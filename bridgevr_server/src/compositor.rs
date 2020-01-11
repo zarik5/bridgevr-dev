@@ -237,6 +237,20 @@ impl Compositor {
             ffr_desc,
         } = settings;
 
+        trace_err!(present_consumer.push(PresentData {
+            frame_index: 0,
+            layers: vec![],
+            sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
+            // temp texture
+            sync_texture: Arc::new(Texture::new(
+                graphics.clone(),
+                (1, 1),
+                Format::Rgba8Unorm,
+                1,
+            )?),
+            force_idr_slice_idxs: vec![],
+        }))?;
+
         let composition_texture = Arc::new(Texture::new(
             graphics.clone(),
             target_eye_resolution,

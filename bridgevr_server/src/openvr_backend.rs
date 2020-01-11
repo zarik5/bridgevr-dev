@@ -263,7 +263,7 @@ fn create_virtual_display_callbacks(
                 #[cfg(target_os = "linux")]
                 let maybe_texture = {
                     let data = unsafe {
-                        *(present_info.backbufferTextureHandle as *mut VRVulkanTextureData_t)
+                        &*(present_info.backbufferTextureHandle as *mut vr::VRVulkanTextureData_t)
                     };
 
                     let format = format_from_native(data.m_nFormat);
@@ -311,16 +311,6 @@ fn create_virtual_display_callbacks(
             ) {
                 let pose =
                     pose_from_openvr_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
-
-                if present_producer.added_count() == 0 {
-                    present_producer.add(PresentData {
-                        frame_index: 0,
-                        layers: vec![],
-                        sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
-                        sync_texture: texture.clone(),
-                        force_idr_slice_idxs: vec![],
-                    });
-                }
 
                 let res = present_producer
                     .fill(TIMEOUT, |present_data| {
@@ -472,15 +462,6 @@ fn create_driver_direct_mode_callbacks(
                 &mut *context.present_producer.lock(),
                 &mut context.swap_texture_manager.lock().get(sync_handle),
             ) {
-                if present_producer.added_count() == 0 {
-                    present_producer.add(PresentData {
-                        frame_index: 0,
-                        layers: vec![],
-                        sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
-                        sync_texture: sync_texture.clone(),
-                        force_idr_slice_idxs: vec![],
-                    });
-                }
 
                 let res = present_producer
                     .fill(TIMEOUT, |present_data| {
