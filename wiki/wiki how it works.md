@@ -6,19 +6,19 @@ BridgeVR is written in Rust, a fast and secure language that catches most memory
 
 The most important libraries used by BridgeVR are:
 
-* OpenVR driver for the VR server (through a custom wrapper). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
-* OpenXR for the VR client. This allows BridgeVR to potentially support an increasing number of VR headsets.
-* Oculus mobile sdk (todo: ?)
-* gfx-hal for cross platform rendering engine.
-* NVENC and MediaCodec (through FFI bindings) + GStreamer for video encoding/decoding (AFAIK this is the only actively mantained audio/video Rust library that is both cross platform and can support hardware acceleration). This allows BridgeVR to support a wide range of pc and client hardware.
+* OpenVR driver for the VR server (through a custom wrapper and FFI bindings). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
+* Oculus mobile sdk as Oculus Quest and Go VR client (through FFI bindings).
+* OpenXR as an alternative VR client (limited support). This allows BridgeVR to potentially support an increasing number of VR headsets.
+* gfx-hal for rendering abstraction layer.
+* FFmpeg for video encoder and decoder.
+* CPAL and oboe for audio recording/playback.
 * Servo for settings and packets de/serialization.
-* CPAL for audio recording/playback.
 * android-glue for writing all Rust android app.
-* Node.js for the GUI.
+* Node.js and Electron for the GUI.
 
 ## Client-server communication
 
-The client and the server communicate via Wi-Fi mainly through UDP for minimal latency.  
+The client and the server communicate via Wi-Fi mainly through UDP to reduce latency.  
 The handshake happens following the procedure shown here:  
 
 ```handshake
@@ -75,4 +75,4 @@ Regarding audio (game sound and microphone) right now an analog approach is not 
 ## Foveated Rendering and sliced encoding
 
 BridgeVR implements Oculus' AADT (Axis-Aligned Distorted Transfer) foveated rendering technique where the edges of the frames are squished to reduce the amount of data transmitted and then re-expanded before displaying the frames.  
-Sliced encoding is also implemented where each frame is decomposed into smaller rectangles and then encoded, transmitted and decoded independent from each other; finally the slices are merged into the original frame. The size and arrangement of the slices is calculated so to minimize the wasted bandwidth by new objects entering the slice.
+Sliced encoding is also implemented where each frame is decomposed into smaller rectangles and then encoded, transmitted and decoded independently from each other; finally the slices are merged into the original frame. The size and arrangement of the slices is calculated so to minimize the wasted bandwidth by new objects entering the slice.

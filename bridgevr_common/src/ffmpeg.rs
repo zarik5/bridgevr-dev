@@ -316,10 +316,9 @@ impl FfmpegVideoEncoder {
     pub fn new(
         resolution: (u32, u32),
         fps: f32,
-        video_encoder_desc: FfmpegVideoEncoderDesc,
+        encoder_type: FfmpegVideoEncoderType,
+        encoder_desc: FfmpegVideoCodecDesc,
     ) -> StrResult<Self> {
-        let encoder_type = video_encoder_desc.encoder_type;
-
         let hw_format;
         let hw_device_type;
         // let mut maybe_hw_name_c_str = None;
@@ -380,7 +379,7 @@ impl FfmpegVideoEncoder {
             graphics = Arc::new(GraphicsContext::from_device_ptr(device_ptr)?);
         }
 
-        let encoder_name_c_string = trace_err!(CString::new(video_encoder_desc.encoder_name))?;
+        let encoder_name_c_string = trace_err!(CString::new(encoder_desc.codec_name))?;
         let codec_ptr =
             trace_null_ptr!(avcodec_find_encoder_by_name(encoder_name_c_string.as_ptr()))?;
 
@@ -398,16 +397,19 @@ impl FfmpegVideoEncoder {
             resolution,
             fps,
             hw_format,
-            hw_frames_context_options: video_encoder_desc.hw_frames_context_options,
-            context_options: video_encoder_desc.context_options,
-            priv_data_options: video_encoder_desc.priv_data_options,
-            codec_open_options: video_encoder_desc.codec_open_options,
-            frame_options: video_encoder_desc.frame_options,
+            hw_frames_context_options: encoder_desc.hw_frames_context_options,
+            context_options: encoder_desc.context_options,
+            priv_data_options: encoder_desc.priv_data_options,
+            codec_open_options: encoder_desc.codec_open_options,
+            frame_options: encoder_desc.frame_options,
         };
+
+        let video_coder =
+            VideoCoder::new(graphics, codec_ptr, hw_device_ref_ptr, video_coder_desc)?;
 
         Ok(FfmpegVideoEncoder {
             encoder_type,
-            video_coder: VideoCoder::new(graphics, codec_ptr, hw_device_ref_ptr, video_coder_desc)?,
+            video_coder,
         })
     }
 
@@ -491,10 +493,9 @@ impl FfmpegVideoDecoder {
     pub fn new(
         resolution: (u32, u32),
         fps: f32,
-        video_decoder_desc: FfmpegVideoDecoderDesc,
+        decoder_type: FfmpegVideoDecoderType,
+        decoder_desc: FfmpegVideoCodecDesc,
     ) -> StrResult<Self> {
-        let decoder_type = video_decoder_desc.decoder_type;
-
         let hw_format;
         let hw_device_type;
         match decoder_type {
@@ -536,7 +537,7 @@ impl FfmpegVideoDecoder {
             graphics = Arc::new(GraphicsContext::from_device_ptr(device_ptr)?);
         }
 
-        let decoder_name_c_string = trace_err!(CString::new(video_decoder_desc.decoder_name))?;
+        let decoder_name_c_string = trace_err!(CString::new(decoder_desc.codec_name))?;
         let codec_ptr =
             trace_null_ptr!(avcodec_find_decoder_by_name(decoder_name_c_string.as_ptr()))?;
 
@@ -544,11 +545,11 @@ impl FfmpegVideoDecoder {
             resolution,
             fps,
             hw_format,
-            hw_frames_context_options: video_decoder_desc.hw_frames_context_options,
-            context_options: video_decoder_desc.context_options,
-            priv_data_options: video_decoder_desc.priv_data_options,
-            codec_open_options: video_decoder_desc.codec_open_options,
-            frame_options: video_decoder_desc.frame_options,
+            hw_frames_context_options: decoder_desc.hw_frames_context_options,
+            context_options: decoder_desc.context_options,
+            priv_data_options: decoder_desc.priv_data_options,
+            codec_open_options: decoder_desc.codec_open_options,
+            frame_options: decoder_desc.frame_options,
         };
 
         let video_coder =

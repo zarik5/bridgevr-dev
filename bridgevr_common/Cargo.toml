@@ -11,7 +11,7 @@ crate-type = ['lib']
 [dependencies]
 parking_lot = '0.10.0' # Mutex
 bitflags = '1.2.1'
-backtrace = '0.3.40'
+backtrace = '0.3.41'
 safe-transmute = '0.10.1'
 log = '0.4.8'
 serde = { version = '1.0.104', features = ['derive'] }
@@ -30,7 +30,7 @@ gfx-backend-vulkan = { version = '0.4.0' }
 ash = {version = '0.29.0' }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-cuda = { version = '0.4.0-pre.2', features = ['cuda_10_1'] } # Encoder interop for Nvidia
+cuda = { version = '0.4.0-pre.2', features = ['cuda_10_1'] } # Encoder interop for Nvidia. todo: consider rustacuda? or cuda-sys
 
 [target.'cfg(windows)'.dependencies]
 # WARNING: any version change can create undefined behaviour

@@ -48,8 +48,8 @@ pub struct MotionDesc {
 pub enum FfmpegVideoEncoderType {
     #[cfg(target_os = "linux")]
     CUDA,
-    // vulkan for AMD soon?
-    // I excluded VAAPI because there are no Rust libraries
+    // AMD soon? waiting on Vulkan hwcontext support
+    // VAAPI is excluded because there are no Rust libraries
     #[cfg(windows)]
     D3D11VA,
 
@@ -83,21 +83,8 @@ pub enum FfmpegOptionValue {
 pub struct FfmpegOption(pub String, pub FfmpegOptionValue);
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct FfmpegVideoEncoderDesc {
-    pub encoder_type: FfmpegVideoEncoderType,
-    pub encoder_name: String,
-    pub context_options: Vec<FfmpegOption>,
-    pub priv_data_options: Vec<FfmpegOption>,
-    pub codec_open_options: Vec<(String, String)>,
-    pub frame_options: Vec<FfmpegOption>,
-    pub vendor_specific_context_options: Vec<(String, String)>,
-    pub hw_frames_context_options: Vec<FfmpegOption>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct FfmpegVideoDecoderDesc {
-    pub decoder_type: FfmpegVideoDecoderType,
-    pub decoder_name: String,
+pub struct FfmpegVideoCodecDesc {
+    pub codec_name: String,
     pub context_options: Vec<FfmpegOption>,
     pub priv_data_options: Vec<FfmpegOption>,
     pub codec_open_options: Vec<(String, String)>,
@@ -115,26 +102,12 @@ pub enum FrameSize {
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum LatencyDesc {
     Automatic {
-        expected_missed_poses_per_hour: u32,
-        expected_missed_frames_per_hour: u32,
-        server_history_mean_lifetime_s: u32,
-        client_history_mean_lifetime_s: u32,
+        expected_misses_per_hour: u32,
+        history_mean_lifetime_s: u32,
     },
     Manual {
         ms: u32,
-    },
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub enum BitrateDesc {
-    Automatic {
-        default_mbps: u32,
-        expected_lost_frame_per_hour: u32,
-        history_seconds: u32,
-        packet_loss_bitrate_factor: f32,
-    },
-    Manual {
-        mbps: u32,
+        history_mean_lifetime_s: u32,
     },
 }
 
@@ -146,12 +119,12 @@ pub struct ConnectionDesc {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum VideoEncoderDesc {
-    Ffmpeg(FfmpegVideoEncoderDesc),
+    Ffmpeg(FfmpegVideoEncoderType, FfmpegVideoCodecDesc),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum VideoDecoderDesc {
-    Ffmpeg(FfmpegVideoDecoderDesc),
+    Ffmpeg(FfmpegVideoDecoderType, FfmpegVideoCodecDesc),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -177,20 +150,17 @@ pub struct VideoDesc {
     pub frame_slice_count: u64,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub struct MicrophoneDesc {
-    pub client_device_index: Option<u64>,
-    pub server_device_index: u64,
+    pub frame_latency: LatencyDesc,
+    pub head_pose_latency: LatencyDesc,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AudioDesc {
-    pub loopback_device_index: Switch<Option<u64>>,
-    pub microphone: Switch<MicrophoneDesc>,
+    pub input_device_index: Option<u64>,
+    pub output_device_index: Option<u64>,
     pub max_packet_size: u64,
-    pub max_latency_ms: u64, // if set too low the audio becomes choppy
+    pub latency: LatencyDesc,
+    pub resync_speed: f32, // audio seconds per seconds
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -257,10 +227,9 @@ pub struct HeadsetsDesc {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Settings {
     pub connection: ConnectionDesc,
-    pub latency: LatencyDesc,
-    pub bitrate: BitrateDesc,
     pub video: VideoDesc,
-    pub audio: AudioDesc,
+    pub game_audio: Switch<AudioDesc>,
+    pub microphone: Switch<AudioDesc>,
     pub openvr: OpenvrDesc,
     pub headsets: HeadsetsDesc,
 }
@@ -364,9 +333,6 @@ pub struct ClientHandshakePacket {
     pub native_eye_resolution: (u32, u32),
     pub fov: [Fov; 2],
     pub fps: u32,
-
-    // this is used to determine type and count of input devices
-    pub input_device_initial_data: InputDeviceData,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -394,11 +360,16 @@ pub enum ServerMessage {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct MotionData {
+    pub time_ns: u64,
+    pub hmd: MotionDesc,
+    pub controllers: [MotionDesc; 2],
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct ClientUpdate {
-    pub pose_time_offset_ns: u64,
-    pub hmd_motion: MotionDesc,
-    pub controllers_motion: [MotionDesc; 2],
-    pub input_data: InputDeviceData,
+    pub motion_data: MotionData,
+    pub input_device_data: InputDeviceData,
     pub vsync_offset_ns: i32,
 }
 

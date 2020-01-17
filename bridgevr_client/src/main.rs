@@ -1,58 +1,147 @@
 mod compositor;
 mod input;
 mod logging_backend;
-mod openxr_backend;
 mod video_decoder;
+mod vr_client;
 
-use bridgevr_common::*;
-// use openxr as xr;
+#[cfg(target_os = "android")]
+mod oboe;
+#[cfg(not(target_os = "android"))]
+mod openxr;
+#[cfg(target_os = "android")]
+mod ovr;
+
+use bridgevr_common::{data::*, rendering::*, ring_channel::*, sockets::*, *};
+use compositor::*;
+use parking_lot::*;
+use std::{
+    sync::{atomic::*, Arc},
+    thread,
+    time::*,
+};
+use vr_client::*;
+use log::debug;
+
+#[cfg(not(target_os = "android"))]
+use bridgevr_common::audio::*;
+#[cfg(target_os = "android")]
+use oboe::*;
+
+const TRACE_CONTEXT: &str = "App main";
+
+const TIMEOUT: Duration = Duration::from_millis(500);
+
+fn begin_client_loop(
+    compositor: Arc<Mutex<Compositor>>,
+    vr_client: Arc<Mutex<VrClient>>,
+    connected_to_server: Arc<AtomicBool>,
+) -> StrResult {
+    let try_connect = {
+        let vr_client = vr_client.clone();
+        let compositor = compositor.clone();
+        move || -> StrResult {
+            let client_handshake_packet = ClientHandshakePacket {
+                bridgevr_name: constants::BVR_NAME.into(),
+                version: constants::BVR_VERSION_CLIENT,
+                native_eye_resolution: vr_client.lock().native_eye_resolution(),
+                fov: vr_client.lock().fov(),
+                fps: vr_client.lock().fps(),
+            };
+            let (connection_manager, server_handshake_packet) =
+                ConnectionManager::connect_to_server(client_handshake_packet, |server_message| {
+                    match server_message {
+                        ServerMessage::Haptic(data) => {
+                            //todo
+                        }
+                        ServerMessage::Shutdown => {
+                            //todo
+                        }
+                    }
+                })?;
+            let connection_manager = Arc::new(Mutex::new(connection_manager));
+            let settings = server_handshake_packet.settings;
+
+            let sender_data_port = settings.connection.starting_data_port;
+            let mut next_receiver_data_port = settings.connection.starting_data_port;
+
+            // connection_manager.send_message_udp(packet: &SM);
+
+            let maybe_game_audio_player = match settings.game_audio {
+                Switch::Enabled(desc) => {
+                    let (producer, consumer) = keyed_channel_split(TIMEOUT);
+                    connection_manager.lock().begin_receive_indexed_buffers(
+                        "Game audio receive loop",
+                        next_receiver_data_port,
+                        producer,
+                    )?;
+                    Some(AudioPlayer::start_playback(
+                        desc.output_device_index,
+                        consumer,
+                    )?)
+                }
+                Switch::Disabled => None,
+            };
+
+            thread_loop::spawn("Pose data get loop", {
+                let vr_client = vr_client.clone();
+                move || {
+                    let (motion_data, input_device_data) = vr_client.lock().poll_input();
+                    let client_update = ClientUpdate {
+                        motion_data,
+                        input_device_data,
+                        vsync_offset_ns: 0, // todo
+                    };
+                    connection_manager
+                        .lock()
+                        .send_message_udp(&ClientMessage::Update(Box::new(client_update)))
+                        .map_err(|e| debug!("{}", e))
+                        .ok();
+                }
+            })?;
+
+            compositor.lock().initialize_for_server();
+            vr_client.lock().initialize_for_server();
+
+            loop {}
+            Ok(())
+        }
+    };
+
+    trace_err!(thread::Builder::new()
+        .name("Connection/statistics loop".into())
+        .spawn(move || loop {
+            show_err!(try_connect()).ok();
+            vr_client.lock().deinitialize_for_server();
+            compositor.lock().deinitialize_for_server();
+        })
+        .map(|_| ()))
+}
+
+fn run() -> StrResult {
+    let graphics = Arc::new(GraphicsContext::new(None)?);
+    let compositor = Arc::new(Mutex::new(Compositor::new(graphics.clone())?));
+    let vr_client = Arc::new(Mutex::new(VrClient::new(graphics.clone())?));
+    let connected_to_server = Arc::new(AtomicBool::new(false));
+
+    begin_client_loop(
+        compositor.clone(),
+        vr_client.clone(),
+        connected_to_server.clone(),
+    )?;
+
+    // todo check if rendering must be done on main thread
+    loop {
+        if connected_to_server.load(Ordering::Relaxed) {
+            compositor.lock().render_idle_frame();
+            vr_client.lock().submit_idle_frame();
+        } else {
+            compositor.lock().render_stream_frame();
+            vr_client.lock().submit_stream_frame();
+        }
+    }
+}
 
 fn main() {
-    logging_backend::init_logging(); //todo when connected to server reinitialize logging to send log to server
-
-    // todo: statically link openxr loader
-    // let entry = ok_or_panic!(
-    //     xr::Entry::load_from(std::path::Path::new("openxr_loader-1_0.dll")),
-    //     "OpenXR loader"
-    // );
-
-    // let supported_extensions = entry.enumerate_extensions().unwrap();
-
-    // if !supported_extensions.khr_convert_timespec_time {
-    //     log_panic!("timespec conversion unsupported");
-    // }
-
-    // // todo: add android and oculus extensions
-
-    // let required_extensions = xr::ExtensionSet {
-    //     khr_vulkan_enable: true,
-    //     ..<_>::default()
-    // };
-
-    // let instance = ok_or_panic!(
-    //     entry.create_instance(
-    //         &xr::ApplicationInfo {
-    //             application_name: constants::BVR_NAME,
-    //             application_version: constants::BVR_VERSION_CLIENT,
-    //             ..<_>::default()
-    //         },
-    //         &required_extensions,
-    //     ),
-    //     "OpenXR instance"
-    // );
-
-    // //let instance_props = instance.properties().unwrap();
-
-    // let system = instance
-    //     .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
-    //     .unwrap();
-
-    // let system_properties = instance.system_properties(system).unwrap();
-
-    // let device_id = system_properties.system_id.into_raw();
-    // let device_name = system_properties.system_name;
-
-    // let view_config_views = instance
-    //     .enumerate_view_configuration_views(system, xr::ViewConfigurationType::PRIMARY_STEREO)
-    //     .unwrap();
+    logging_backend::init_logging();
+    show_err!(run()).ok();
 }

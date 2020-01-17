@@ -31,5 +31,5 @@ msgbox = '0.4.0'
 [build-dependencies]
 dirs = '2.0.2'
 bindgen = '0.52.0'
-cc = '1.0.48'
+cc = '1.0.50'
 # pkg-config = '0.3.17'

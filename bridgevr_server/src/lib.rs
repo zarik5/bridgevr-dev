@@ -1,10 +1,9 @@
 mod compositor;
 mod logging_backend;
-mod openvr_backend;
+mod openvr;
 mod shutdown_signal;
 mod statistics;
 mod video_encoder;
-// mod nvenc;
 
 use bridgevr_common::{
     audio::*, constants::*, data::*, rendering::*, ring_channel::*, sockets::*, *,
@@ -12,7 +11,7 @@ use bridgevr_common::{
 use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
-use openvr_backend::*;
+use openvr::*;
 use openvr_driver::*;
 use shutdown_signal::ShutdownSignal;
 use statistics::*;
@@ -44,18 +43,13 @@ fn begin_server_loop(
     shutdown_signal_receiver: Receiver<ShutdownSignal>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 ) -> StrResult {
-    let timeout = Duration::from_secs(
-        get_settings()
-            .map(|s| s.openvr.timeout_seconds)
-            .unwrap_or(1),
-    );
+    let timeout = get_settings()
+        .map(|s| Duration::from_secs(s.openvr.timeout_seconds))
+        .unwrap_or(TIMEOUT);
     let mut deadline = Instant::now() + timeout;
 
     let try_connect = {
         let openvr_backend = openvr_backend.clone();
-
-        // if any error is encountered, display it immediately to avoid waiting for every object to
-        // drop
         move |shutdown_signal_receiver: &Receiver<ShutdownSignal>| -> StrResult<ShutdownSignal> {
             let settings = if let Ok(settings) = get_settings() {
                 settings
@@ -170,23 +164,23 @@ fn begin_server_loop(
                 next_sender_data_port += 1;
             }
 
-            let mut maybe_game_audio_recorder = match settings.audio.loopback_device_index {
-                Switch::Enabled(device_idx) => {
+            let mut maybe_game_audio_recorder = match &settings.game_audio {
+                Switch::Enabled(desc) => {
                     let (producer, consumer) = queue_channel_split();
-                    let audio_recorder =
-                        AudioRecorder::start_recording(device_idx, true, producer)?;
+                    let game_audio_recorder =
+                        AudioRecorder::start_recording(desc.input_device_index, true, producer)?;
                     connection_manager.lock().begin_send_buffers(
                         "Game audio send loop",
                         next_sender_data_port,
                         consumer,
                     )?;
-                    Some(audio_recorder)
+                    Some(game_audio_recorder)
                 }
                 Switch::Disabled => None,
             };
 
-            let mut maybe_microphone_player = match &settings.audio.microphone {
-                Switch::Enabled(mic) => {
+            let mut maybe_microphone_player = match &settings.microphone {
+                Switch::Enabled(desc) => {
                     let (producer, consumer) = keyed_channel_split(Duration::from_millis(100));
                     connection_manager.lock().begin_receive_indexed_buffers(
                         "Microphone audio receive loop",
@@ -194,7 +188,7 @@ fn begin_server_loop(
                         producer,
                     )?;
                     Some(AudioPlayer::start_playback(
-                        Some(mic.server_device_index),
+                        desc.output_device_index,
                         consumer,
                     )?)
                 }
@@ -207,17 +201,8 @@ fn begin_server_loop(
                     &settings,
                     session_desc_loader.lock().get_mut(),
                     present_producer,
-                    {
-                        let connection_manager = connection_manager.clone();
-                        move |haptic_data| {
-                            connection_manager
-                                .lock()
-                                .send_message_udp(&ServerMessage::Haptic(haptic_data))
-                                .map_err(|e| debug!("{}", e))
-                                .ok();
-                        }
-                    },
-                );
+                    connection_manager.clone(),
+                )?;
 
             let statistics_interval = Duration::from_secs(1);
             let res = loop {

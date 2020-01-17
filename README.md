@@ -51,6 +51,7 @@ More information on the related [wiki page](todo link)
 * Automatic SteamVR Chaperone setup
 * Gamma correction
 * Presets, differential settings saving/loading
+* Lints on unsupported or non reccomended settings
 
 Any help on supporting new features or platforms is gratly appreciated!
 

@@ -287,8 +287,8 @@ impl Compositor {
             }
         }
 
-        let (compressed_eye_width, compressed_eye_height) = compressed_eye_resolution;
-        let compressed_frame_resolution = (compressed_eye_width * 2, compressed_eye_height);
+        let compressed_frame_resolution =
+            (compressed_eye_resolution.0 * 2, compressed_eye_resolution.1);
 
         let slices_desc =
             slices_desc_from_count(slice_producers.len(), compressed_frame_resolution);
