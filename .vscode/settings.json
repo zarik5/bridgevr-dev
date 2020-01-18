@@ -38,6 +38,7 @@
         "xutility": "cpp",
         "cstddef": "cpp",
         "xstddef": "cpp",
-        "xstring": "cpp"
+        "xstring": "cpp",
+        "functional": "cpp"
     }
 }

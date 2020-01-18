@@ -18,7 +18,7 @@ VREvent_t
 
 using namespace vr;
 
-// EXPAND is sometimes necessary for msvc preprocessor
+// EXPAND is sometimes necessary for MSVC preprocessor
 #define EXPAND(x) x
 
 #define NARGS_SEQ(_1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...) N
@@ -65,31 +65,31 @@ using namespace vr;
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-#define CLASS_C_INTERFACE(prefix, ClassName, interface)                      \
-    class ClassName final : public prefix##ClassName                         \
-    {                                                                        \
-    public:                                                                  \
-        ClassName(ClassName##Callbacks *callbacks) : callbacks(callbacks) {} \
-                                                                             \
-    private:                                                                 \
-        ClassName##Callbacks *callbacks;                                     \
-        interface;                                                           \
-    };                                                                       \
-                                                                             \
-    ClassName *vrCreate##ClassName(ClassName##Callbacks *callbacks)          \
-    {                                                                        \
-        return new ClassName(callbacks);                                     \
-    }                                                                        \
-                                                                             \
-    void vrDestroy##ClassName(ClassName **instance)                          \
-    {                                                                        \
-        delete *instance;                                                    \
+#define CLASS_C_INTERFACE(prefix, ClassName, interface)                     \
+    class ClassName final : public prefix##ClassName                        \
+    {                                                                       \
+    public:                                                                 \
+        ClassName(ClassName##Callbacks callbacks) : callbacks(callbacks) {} \
+                                                                            \
+    private:                                                                \
+        ClassName##Callbacks callbacks;                                     \
+        interface;                                                          \
+    };                                                                      \
+                                                                            \
+    ClassName *vrCreate##ClassName(ClassName##Callbacks callbacks)          \
+    {                                                                       \
+        return new ClassName(callbacks);                                    \
+    }                                                                       \
+                                                                            \
+    void vrDestroy##ClassName(ClassName **instance)                         \
+    {                                                                       \
+        delete *instance;                                                   \
     }
 
 #define METHOD(return_type, ...) EXPAND(                     \
     return_type NAME(__VA_ARGS__)(PARAMETERS(__VA_ARGS__)) { \
-        return callbacks->NAME(__VA_ARGS__)(                 \
-            callbacks->context                               \
+        return callbacks.NAME(__VA_ARGS__)(                  \
+            callbacks.context                                \
                 COMMA(__VA_ARGS__)                           \
                     ARGUMENTS(__VA_ARGS__));                 \
     })
@@ -160,10 +160,10 @@ CLASS_C_INTERFACE(
     void CreateSwapTextureSet(uint32_t unPid,
                               const SwapTextureSetDesc_t *pSwapTextureSetDesc,
                               SharedTextureHandle_t (*pSharedTextureHandles)[3]) {
-        callbacks->CreateSwapTextureSet(callbacks->context,
-                                        unPid,
-                                        pSwapTextureSetDesc,
-                                        pSharedTextureHandles);
+        callbacks.CreateSwapTextureSet(callbacks.context,
+                                       unPid,
+                                       pSwapTextureSetDesc,
+                                       pSharedTextureHandles);
     }
 
     METHOD(void, DestroySwapTextureSet, SharedTextureHandle_t);
@@ -171,12 +171,12 @@ CLASS_C_INTERFACE(
 
     void GetNextSwapTextureSetIndex(SharedTextureHandle_t sharedTextureHandles[2],
                                     uint32_t (*pIndices)[2]) {
-        callbacks->GetNextSwapTextureSetIndex(
-            callbacks->context, (const SharedTextureHandle_t(&)[2])sharedTextureHandles, pIndices);
+        callbacks.GetNextSwapTextureSetIndex(
+            callbacks.context, (const SharedTextureHandle_t(&)[2])sharedTextureHandles, pIndices);
     }
 
     void SubmitLayer(const SubmitLayerPerEye_t (&perEye)[2], const HmdMatrix34_t *pPose) {
-        callbacks->SubmitLayer(callbacks->context, perEye, pPose);
+        callbacks.SubmitLayer(callbacks.context, perEye, pPose);
     }
 
     METHOD(void, Present, SharedTextureHandle_t);
@@ -275,13 +275,13 @@ CLASS_C_INTERFACE(
                              HmdVector2_t *pCenter,
                              EVRDistortionFunctionType *peDistortionType,
                              double rCoefficients[k_unMaxDistortionFunctionParameters]) {
-        return callbacks->GetCameraIntrinsics(callbacks->context,
-                                              nCameraIndex,
-                                              eFrameType,
-                                              pFocalLength,
-                                              pCenter,
-                                              peDistortionType,
-                                              rCoefficients);
+        return callbacks.GetCameraIntrinsics(callbacks.context,
+                                             nCameraIndex,
+                                             eFrameType,
+                                             pFocalLength,
+                                             pCenter,
+                                             peDistortionType,
+                                             rCoefficients);
     });
 
 struct ServerTrackedDeviceProviderCallbacks
@@ -492,7 +492,11 @@ FORWARD_FN(VRDriverInput, EVRInputError, vrDriverInput, CreateBooleanComponent,
 FORWARD_FN(VRDriverInput, EVRInputError, vrDriverInput, UpdateBooleanComponent,
            VRInputComponentHandle_t, bool, double);
 FORWARD_FN(VRDriverInput, EVRInputError, vrDriverInput, CreateScalarComponent,
-           PropertyContainerHandle_t, const char *, VRInputComponentHandle_t *, EVRScalarType, EVRScalarUnits);
+           PropertyContainerHandle_t,
+           const char *,
+           VRInputComponentHandle_t *,
+           EVRScalarType,
+           EVRScalarUnits);
 FORWARD_FN(VRDriverInput, EVRInputError, vrDriverInput, UpdateScalarComponent,
            VRInputComponentHandle_t, float, double);
 FORWARD_FN(VRDriverInput, EVRInputError, vrDriverInput, CreateHapticComponent,

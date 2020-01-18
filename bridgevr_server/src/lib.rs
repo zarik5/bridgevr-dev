@@ -12,11 +12,12 @@ use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
 use openvr::*;
-use openvr_driver::*;
 use shutdown_signal::ShutdownSignal;
 use statistics::*;
 use std::{
     ffi::*,
+    os::raw::*,
+    ptr::null_mut,
     sync::{mpsc::*, *},
     thread,
     time::*,
@@ -314,24 +315,51 @@ fn create_empty_system() -> StrResult<EmptySystem> {
     })
 }
 
-openvr_server_entry_point!({
+// OpenVR entry point
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn HmdDriverFactory(
+    interface_name: *const c_char,
+    return_code_ptr: *mut c_int,
+) -> *mut c_void {
+    use openvr_driver_sys as vr;
     logging_backend::init_logging();
 
     lazy_static! {
         static ref MAYBE_EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
     }
 
-    show_err!(MAYBE_EMPTY_SYSTEM.as_ref()).map(|sys| {
-        show_err!(begin_server_loop(
+    let try_create_server = || -> StrResult<_> {
+        let sys = (*MAYBE_EMPTY_SYSTEM).as_ref()?;
+        begin_server_loop(
             sys.graphics.clone(),
             sys.openvr_backend.clone(),
             sys.shutdown_signal_sender.lock().clone(),
             // this unwrap is safe because `shutdown_signal_receiver_temp` has just been set
             sys.shutdown_signal_receiver_temp.lock().take().unwrap(),
-            sys.session_desc_loader.clone()
-        ))
-        .ok();
+            sys.session_desc_loader.clone(),
+        )?;
 
-        sys.openvr_backend.lock().server_native()
-    })
-});
+        Ok(sys.openvr_backend.lock().server_ptr())
+    };
+
+    match try_create_server() {
+        Ok(mut server_ptr) => {
+            if CStr::from_ptr(interface_name)
+                == CStr::from_bytes_with_nul_unchecked(vr::IServerTrackedDeviceProvider_Version)
+            {
+                server_ptr = null_mut();
+            }
+
+            if server_ptr.is_null() && !return_code_ptr.is_null() {
+                *return_code_ptr = vr::VRInitError_Init_InterfaceNotFound as _;
+            }
+
+            server_ptr as _
+        }
+        Err(e) => {
+            show_err_str!("{}", e);
+            null_mut()
+        }
+    }
+}
