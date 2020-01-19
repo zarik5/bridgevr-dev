@@ -1,5 +1,3 @@
-#![allow(clippy::type_complexity)]
-
 mod controllers;
 mod hmd;
 mod settings;

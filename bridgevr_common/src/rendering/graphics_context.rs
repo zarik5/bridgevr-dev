@@ -2,6 +2,7 @@ use crate::{constants::BVR_NAME, StrResult};
 pub use gfx_hal::format::Format;
 use gfx_hal::{adapter::MemoryType, prelude::*, queue::QueueGroup, *};
 use log::debug;
+use std::sync::Arc;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use gfx_backend_vulkan as back;

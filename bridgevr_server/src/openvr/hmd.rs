@@ -1,5 +1,3 @@
-// #![allow(clippy::type_complexity)]
-
 use super::settings::*;
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
 use bridgevr_common::{data::*, rendering::*, ring_channel::*};
@@ -20,7 +18,7 @@ const TIMEOUT: Duration = Duration::from_millis(500);
 
 const SWAP_TEXTURE_SET_SIZE: usize = 3;
 
-// On VirtualDislay interface the same texture is used for left and right eye.
+// On VirtualDisplay interface the same texture is used for left and right eye.
 const VIRTUAL_DISPLAY_TEXTURE_BOUNDS: [TextureBounds; 2] = [
     // left
     TextureBounds {
@@ -64,6 +62,7 @@ pub struct AuxiliaryTextureData(#[cfg(target_os = "linux")] vr::VRVulkanTextureD
 unsafe impl Send for AuxiliaryTextureData {}
 unsafe impl Sync for AuxiliaryTextureData {}
 
+#[allow(clippy::type_complexity)]
 pub struct HmdContext {
     pub id: Mutex<Option<u32>>,
     pub display_component: Mutex<*mut vr::DisplayComponent>,
@@ -204,13 +203,13 @@ extern "C" fn virtual_display_present(
             .or_else(|| {
                 #[cfg(target_os = "linux")]
                 let maybe_texture = {
-                    let data =
-                        &*(present_info.backbufferTextureHandle as *mut vr::VRVulkanTextureData_t);
+                    let data = &*((*present_info).backbufferTextureHandle
+                        as *mut vr::VRVulkanTextureData_t);
 
                     let format = format_from_native(data.m_nFormat);
                     Texture::from_shared_vulkan_ptrs(
                         data.m_nImage,
-                        context.graphics.clone(),
+                        (*context).graphics.clone(),
                         data.m_pInstance as _,
                         data.m_pPhysicalDevice as _,
                         data.m_pDevice as _,
@@ -367,11 +366,11 @@ extern "C" fn create_swap_texture_set(
     if let Ok((_, data)) = maybe_swap_texture_set {
         #[cfg(target_os = "linux")]
         let shared_texture_handles_vec: Vec<_> = {
-            let instance_ptr = context.graphics.instance_ptr();
-            let physical_device_ptr = context.graphics.physical_device_ptr();
-            let device_ptr = context.graphics.device_ptr();
-            let queue_ptr = context.graphics.queue_ptr();
-            let queue_family_index = context.graphics.queue_family_index();
+            let instance_ptr = unsafe { (*context).graphics.instance_ptr() };
+            let physical_device_ptr = unsafe { (*context).graphics.physical_device_ptr() };
+            let device_ptr = unsafe { (*context).graphics.device_ptr() };
+            let queue_ptr = unsafe { (*context).graphics.queue_ptr() };
+            let queue_family_index = unsafe { (*context).graphics.queue_family_index() };
 
             data.iter()
                 .map(|(handle, storage)| {

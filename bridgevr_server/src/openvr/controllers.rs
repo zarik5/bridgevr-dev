@@ -90,7 +90,7 @@ unsafe extern "C" fn deactivate(context: *mut c_void) {
 
 extern "C" fn empty_fn(_: *mut c_void) {}
 
-unsafe extern "C" fn get_component(_: *mut c_void, _: *const c_char) -> *mut c_void {
+extern "C" fn get_component(_: *mut c_void, _: *const c_char) -> *mut c_void {
     ptr::null_mut()
 }
 
