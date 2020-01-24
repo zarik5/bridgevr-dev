@@ -43,7 +43,7 @@ More information on the related [wiki page](todo link)
 
 * Linux support
 * Automatic video stream latency and judder minimization
-* Sliced encoding and multisocket streaming [todo remove?](https://discordapp.com/channels/564087419918483486/588170196968013845/644523694051426352) / todo synchronize and reorder sends by buffer size?
+* Sliced encoding
 * Fixed foveated rendering
 
 ## Upcoming features

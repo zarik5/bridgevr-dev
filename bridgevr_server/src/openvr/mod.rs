@@ -3,7 +3,14 @@ mod hmd;
 mod settings;
 
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{data::*, input_mapping::*, rendering::*, ring_channel::*, sockets::*, *};
+use bridgevr_common::{
+    data::*,
+    input_mapping::*,
+    rendering::*,
+    sockets::*,
+    thread_loop::{self, *},
+    *,
+};
 use controllers::*;
 use hmd::*;
 use log::*;
@@ -57,13 +64,13 @@ fn should_restart(old_settings: &OpenvrSettings, new_settings: &OpenvrSettings) 
         || new_settings.frame_interval != old_settings.frame_interval
 }
 
-pub struct ServerContext {
+struct ServerContext {
     settings: Arc<Mutex<OpenvrSettings>>,
     shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
     hmd: *mut vr::TrackedDeviceServerDriver,
     controllers: Vec<*mut vr::TrackedDeviceServerDriver>,
     controller_contexts: Vec<Arc<ControllerContext>>,
-    connection_manager: Mutex<Option<Arc<Mutex<ConnectionManager<ServerMessage>>>>>,
+    haptic_enqueuer: Mutex<Option<PacketEnqueuer>>,
 }
 
 unsafe extern "C" fn init(
@@ -129,9 +136,9 @@ extern "C" fn get_interface_versions(_: *mut c_void) -> *const *const c_char {
 }
 
 extern "C" fn run_frame(context: *mut c_void) {
-    let context = context as *mut ServerContext;
+    let context = unsafe { &*(context as *mut ServerContext) };
 
-    if let Some(connection_manager) = unsafe { &mut *(*context).connection_manager.lock() } {
+    if let Some(haptic_enqueuer) = &mut *context.haptic_enqueuer.lock() {
         loop {
             let event_size = size_of::<vr::VREvent_t>() as u32;
             let mut event = <_>::default();
@@ -140,7 +147,7 @@ extern "C" fn run_frame(context: *mut c_void) {
             }
 
             if event.eventType == vr::VREvent_Input_HapticVibration as u32 {
-                for (i, ctx) in unsafe { (*context).controller_contexts.iter().enumerate() } {
+                for (i, ctx) in context.controller_contexts.iter().enumerate() {
                     let haptic = unsafe { event.data.hapticVibration };
                     if haptic.componentHandle == *ctx.haptic_component.lock() {
                         let haptic_data = HapticData {
@@ -149,9 +156,8 @@ extern "C" fn run_frame(context: *mut c_void) {
                             duration_seconds: haptic.fDurationSeconds,
                             frequency: haptic.fFrequency,
                         };
-                        connection_manager
-                            .lock()
-                            .send_message_udp(&ServerMessage::Haptic(haptic_data))
+                        haptic_enqueuer
+                            .enqueue(&haptic_data)
                             .map_err(|e| debug!("{}", e))
                             .ok();
                     }
@@ -184,19 +190,18 @@ fn create_server_callbacks(
     }
 }
 
-pub struct OpenvrBackend {
+pub struct VrServer {
     server: *mut vr::ServerTrackedDeviceProvider,
     server_context: Arc<ServerContext>,
     hmd_context: Arc<HmdContext>,
     controller_contexts: Vec<Arc<ControllerContext>>,
-    pose_timer: Instant,
-    additional_pose_time_offset_ns: i64,
+    input_thread: Option<ThreadLoop>,
 }
 
-unsafe impl Send for OpenvrBackend {}
-unsafe impl Sync for OpenvrBackend {}
+unsafe impl Send for VrServer {}
+unsafe impl Sync for VrServer {}
 
-impl OpenvrBackend {
+impl VrServer {
     pub fn new(
         graphics: Arc<GraphicsContext>,
         settings: Option<&Settings>,
@@ -219,9 +224,9 @@ impl OpenvrBackend {
             settings: openvr_settings.clone(),
             graphics,
             swap_texture_manager,
-            present_producer: Mutex::new(None),
             current_layers: Mutex::new(vec![]),
-            current_sync_texture_mutex: Mutex::new(None),
+            sync_texture: Mutex::new(None),
+            compositor_interop: Mutex::new(None),
             pose: Mutex::new(DEFAULT_DRIVER_POSE),
             latest_vsync: Mutex::new((Instant::now(), 0)),
             shutdown_signal_sender: shutdown_signal_sender.clone(),
@@ -280,67 +285,20 @@ impl OpenvrBackend {
             hmd,
             controllers,
             controller_contexts: controller_contexts.clone(),
-            connection_manager: Mutex::new(None),
+            haptic_enqueuer: Mutex::new(None),
         });
 
         let server_callbacks = create_server_callbacks(server_context.clone());
 
         let server = unsafe { vr::vrCreateServerTrackedDeviceProvider(server_callbacks) };
 
-        Self {
+        VrServer {
             server,
             server_context,
             hmd_context,
             controller_contexts,
-            pose_timer: Instant::now(),
-            additional_pose_time_offset_ns: 0,
+            input_thread: None,
         }
-    }
-
-    pub fn initialize_for_client_or_request_restart(
-        &mut self,
-        settings: &Settings,
-        session_desc: &SessionDesc,
-        present_producer: Producer<PresentData>,
-        // haptic_callback: impl FnMut(HapticData) + Send + 'static,
-        connection_manager: Arc<Mutex<ConnectionManager<ServerMessage>>>,
-    ) -> StrResult {
-        // the same openvr settings instance is shared between hmd, controllers and server.
-        let new_settings = create_openvr_settings(Some(settings), session_desc);
-        if should_restart(&*self.hmd_context.settings.lock(), &new_settings) {
-            unsafe {
-                let reason_c_string = trace_err!(CString::new(
-                    "Critical properties changed. Restarting SteamVR."
-                ))?;
-                let executable_c_string = trace_err!(CString::new(
-                    "" // todo: steamvr_launcher,
-                ))?;
-                let arguments_c_string = trace_err!(CString::new(
-                    "" // steamvr_launcher_args,
-                ))?;
-                let working_directory_c_string = trace_err!(CString::new(
-                    "" // todo: steamvr_launcher_directory,
-                ))?;
-                vr::vrServerDriverHostRequestRestart(
-                    reason_c_string.as_ptr(),
-                    executable_c_string.as_ptr(),
-                    arguments_c_string.as_ptr(),
-                    working_directory_c_string.as_ptr(),
-                );
-                // shutdown signal will be generated from SteamVR
-            }
-        } else {
-            *self.hmd_context.settings.lock() = new_settings;
-            *self.hmd_context.present_producer.lock() = Some(present_producer);
-            *self.server_context.connection_manager.lock() = Some(connection_manager);
-
-            // todo: notify settings changes to openvr using properties
-        }
-        Ok(())
-    }
-
-    pub fn deinitialize_for_client(&mut self) {
-        *self.hmd_context.present_producer.lock() = None;
     }
 
     fn update_pose(
@@ -378,46 +336,51 @@ impl OpenvrBackend {
         }
     }
 
-    pub fn update_input(&mut self, client_update: &ClientUpdate) {
-        let pose_time_ns = client_update.motion_data.time_ns as i64;
+    fn process_input(
+        input: ClientInputs,
+        hmd_context: &Arc<HmdContext>,
+        controller_contexts: &[Arc<ControllerContext>],
+        pose_timer: &mut Instant,
+        additional_pose_time_offset_ns: &mut i64,
+    ) {
+        let pose_time_ns = input.motion_data.time_ns as i64;
 
-        let server_time_ns = self.pose_timer.elapsed().as_nanos() as i64;
-        let pose_time_offset_ns =
-            server_time_ns + self.additional_pose_time_offset_ns - pose_time_ns;
+        let server_time_ns = pose_timer.elapsed().as_nanos() as i64;
+        let pose_time_offset_ns = server_time_ns + *additional_pose_time_offset_ns - pose_time_ns;
         if pose_time_offset_ns < 0 {
-            self.additional_pose_time_offset_ns = -(server_time_ns - pose_time_ns);
+            *additional_pose_time_offset_ns = -(server_time_ns - pose_time_ns);
         } else if pose_time_offset_ns > RESET_POSE_TIMING_THRESHOLD_NS {
-            self.additional_pose_time_offset_ns =
+            *additional_pose_time_offset_ns =
                 -(server_time_ns + RESET_POSE_TIMING_THRESHOLD_NS - pose_time_ns);
         }
 
-        let offset_time_ns = pose_time_ns - self.additional_pose_time_offset_ns;
+        let offset_time_ns = pose_time_ns - *additional_pose_time_offset_ns;
 
         Self::update_pose(
-            *self.hmd_context.id.lock(),
-            &self.pose_timer,
+            *hmd_context.id.lock(),
+            &pose_timer,
             offset_time_ns,
-            &client_update.motion_data.hmd,
-            &mut self.hmd_context.pose.lock(),
+            &input.motion_data.hmd,
+            &mut hmd_context.pose.lock(),
         );
 
-        for (i, motion) in client_update.motion_data.controllers.iter().enumerate() {
-            let context = &self.controller_contexts[i];
+        for (i, motion) in input.motion_data.controllers.iter().enumerate() {
+            let context = &controller_contexts[i];
             Self::update_pose(
                 *context.id.lock(),
-                &self.pose_timer,
+                &pose_timer,
                 offset_time_ns,
                 motion,
                 &mut context.pose.lock(),
             );
         }
 
-        for ctx in &self.controller_contexts {
+        for ctx in controller_contexts {
             let component_map = ctx.controller_input_to_component_map.lock();
-            for (path, value) in input_device_data_to_str_value(&client_update.input_device_data) {
+            for (path, value) in input_device_data_to_str_value(&input.input_device_data) {
                 if let Some(component) = component_map.get(path) {
-                    let time_offset_s = (self.pose_timer.elapsed().as_nanos() as i64
-                        - offset_time_ns) as f64
+                    let time_offset_s = (pose_timer.elapsed().as_nanos() as i64 - offset_time_ns)
+                        as f64
                         / 1_000_000_f64;
                     unsafe {
                         match value {
@@ -444,12 +407,83 @@ impl OpenvrBackend {
         }
     }
 
+    pub fn initialize_for_client_or_request_restart(
+        &mut self,
+        settings: &Settings,
+        session_desc: &SessionDesc,
+        present_sender: Sender<PresentData>,
+        present_done_notif_receiver: Receiver<()>,
+        mut input_dequeuer: PacketDequeuer,
+        haptic_enqueuer: PacketEnqueuer,
+    ) -> StrResult {
+        // the same openvr settings instance is shared between hmd, controllers and server.
+        let new_settings = create_openvr_settings(Some(settings), session_desc);
+        if should_restart(&*self.hmd_context.settings.lock(), &new_settings) {
+            unsafe {
+                let reason_c_string = trace_err!(CString::new(
+                    "Critical properties changed. Restarting SteamVR."
+                ))?;
+                let executable_c_string = trace_err!(CString::new(
+                    "" // todo: steamvr_launcher,
+                ))?;
+                let arguments_c_string = trace_err!(CString::new(
+                    "" // steamvr_launcher_args,
+                ))?;
+                let working_directory_c_string = trace_err!(CString::new(
+                    "" // todo: steamvr_launcher_directory,
+                ))?;
+                vr::vrServerDriverHostRequestRestart(
+                    reason_c_string.as_ptr(),
+                    executable_c_string.as_ptr(),
+                    arguments_c_string.as_ptr(),
+                    working_directory_c_string.as_ptr(),
+                );
+                // shutdown signal will be generated from SteamVR
+            }
+        } else {
+            *self.hmd_context.settings.lock() = new_settings;
+            *self.hmd_context.compositor_interop.lock() = Some(CompositorInterop {
+                present_sender,
+                present_done_notif_receiver,
+            });
+            *self.server_context.haptic_enqueuer.lock() = Some(haptic_enqueuer);
+
+            let mut pose_timer = Instant::now();
+            let mut additional_pose_time_offset_ns = 0;
+            let hmd_context = self.hmd_context.clone();
+            let controller_contexts = self.controller_contexts.clone();
+            self.input_thread = Some(thread_loop::spawn("OpenVR input loop", move || {
+                let maybe_packet = input_dequeuer.dequeue(TIMEOUT).map_err(|e| debug!("{}", e));
+                if let Ok(packet) = maybe_packet {
+                    let maybe_input = packet.get().map_err(|e| debug!("{}", e));
+                    if let Ok(input) = maybe_input {
+                        Self::process_input(
+                            input,
+                            &hmd_context,
+                            &controller_contexts,
+                            &mut pose_timer,
+                            &mut additional_pose_time_offset_ns,
+                        );
+                    }
+                }
+            })?);
+
+            // todo: notify settings changes to openvr using properties
+        }
+        Ok(())
+    }
+
+    pub fn deinitialize_for_client(&mut self) {
+        *self.hmd_context.compositor_interop.lock() = None;
+        *self.server_context.haptic_enqueuer.lock() = None;
+    }
+
     pub fn server_ptr(&self) -> *mut vr::ServerTrackedDeviceProvider {
         self.server
     }
 }
 
-impl Drop for OpenvrBackend {
+impl Drop for VrServer {
     fn drop(&mut self) {
         let mut display_component_ptr = *self.hmd_context.display_component.lock();
         unsafe { vr::vrDestroyDisplayComponent(&mut display_component_ptr) };

@@ -16,46 +16,48 @@ pub struct ControllerContext {
     pub haptic_component: Mutex<vr::VRInputComponentHandle_t>,
 }
 
-unsafe extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitError {
-    let context = context as *const ControllerContext;
+extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitError {
+    let context = unsafe { &*(context as *const ControllerContext) };
 
-    *(*context).id.lock() = Some(object_id);
-    let container = vr::vrTrackedDeviceToPropertyContainer(object_id);
+    *context.id.lock() = Some(object_id);
+    let container = unsafe { vr::vrTrackedDeviceToPropertyContainer(object_id) };
 
     //todo: set default props
 
     set_custom_props(
         container,
-        &(*context).settings.lock().controllers_custom_properties[(*context).index],
+        &context.settings.lock().controllers_custom_properties[context.index],
     );
 
-    let mut component_map = (*context).controller_input_to_component_map.lock();
+    let mut component_map = context.controller_input_to_component_map.lock();
     for (path, input_type, controller_paths) in
-        &(*context).settings.lock().input_mapping[(*context).index]
+        &context.settings.lock().input_mapping[context.index]
     {
         let path_c_string = CString::new(path.clone()).unwrap();
         let mut component = vr::k_ulInvalidInputComponentHandle;
-        let res = match input_type {
-            InputType::Boolean => vr::vrDriverInputCreateBooleanComponent(
-                container,
-                path_c_string.as_ptr(),
-                &mut component,
-            ),
-            InputType::NormalizedOneSided => vr::vrDriverInputCreateScalarComponent(
-                container,
-                path_c_string.as_ptr(),
-                &mut component,
-                vr::VRScalarType_Absolute,
-                vr::VRScalarUnits_NormalizedOneSided,
-            ),
-            InputType::NormalizedTwoSided => vr::vrDriverInputCreateScalarComponent(
-                container,
-                path_c_string.as_ptr(),
-                &mut component,
-                vr::VRScalarType_Absolute,
-                vr::VRScalarUnits_NormalizedTwoSided,
-            ),
-            _ => todo!(),
+        let res = unsafe {
+            match input_type {
+                InputType::Boolean => vr::vrDriverInputCreateBooleanComponent(
+                    container,
+                    path_c_string.as_ptr(),
+                    &mut component,
+                ),
+                InputType::NormalizedOneSided => vr::vrDriverInputCreateScalarComponent(
+                    container,
+                    path_c_string.as_ptr(),
+                    &mut component,
+                    vr::VRScalarType_Absolute,
+                    vr::VRScalarUnits_NormalizedOneSided,
+                ),
+                InputType::NormalizedTwoSided => vr::vrDriverInputCreateScalarComponent(
+                    container,
+                    path_c_string.as_ptr(),
+                    &mut component,
+                    vr::VRScalarType_Absolute,
+                    vr::VRScalarUnits_NormalizedTwoSided,
+                ),
+                _ => todo!(),
+            }
         };
         if res == 0 {
             for controller_path in controller_paths {
@@ -68,13 +70,15 @@ unsafe extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRIn
 
     let haptic_path_c_string = CString::new(HAPTIC_PATH).unwrap();
     let mut component = vr::k_ulInvalidInputComponentHandle;
-    let res = vr::vrDriverInputCreateHapticComponent(
-        container,
-        haptic_path_c_string.as_ptr(),
-        &mut component,
-    );
+    let res = unsafe {
+        vr::vrDriverInputCreateHapticComponent(
+            container,
+            haptic_path_c_string.as_ptr(),
+            &mut component,
+        )
+    };
     if res == 0 {
-        *(*context).haptic_component.lock() = component;
+        *context.haptic_component.lock() = component;
     } else {
         warn!("Create {}: {}", HAPTIC_PATH, res);
     }

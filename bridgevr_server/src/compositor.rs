@@ -6,7 +6,6 @@ use bridgevr_common::{
     ffr::*,
     frame_slices::*,
     rendering::*,
-    ring_channel::*,
     thread_loop::{self, ThreadLoop},
     *,
 };
@@ -15,7 +14,7 @@ use parking_lot::*;
 use std::{
     collections::{hash_map::*, VecDeque},
     ops::RangeFrom,
-    sync::{atomic::*, Arc},
+    sync::{mpsc::*, Arc},
     time::Duration,
 };
 
@@ -48,59 +47,8 @@ fn get_copy_eye_layers_operation_desc(
     }
 }
 
-// Lock that can behave both as a spinlock and a mutex.
-// This is used in place of a mutex to circumvent Rust's ownership system.
-pub struct SpinLockableMutex {
-    locked: AtomicBool,
-    mutex: Mutex<()>,
-}
-
-impl SpinLockableMutex {
-    pub fn new() -> Self {
-        Self {
-            locked: AtomicBool::new(false),
-            mutex: Mutex::new(()),
-        }
-    }
-
-    fn set_to_locked(&self) {
-        self.locked.store(true, Ordering::Relaxed);
-    }
-
-    fn mutex_lock(&self) -> SpinLockableMutexGuard {
-        self.set_to_locked();
-
-        SpinLockableMutexGuard {
-            mutex: self,
-            _guard: self.mutex.lock(),
-        }
-    }
-
-    // Return true if unlocked, false if failed to unlock
-    // If locked == true and mutex is not locked, this method will spin lock.
-    pub fn wait_for_unlock(&self, timeout: Duration) -> bool {
-        while self.locked.load(Ordering::Relaxed) {
-            if self.mutex.try_lock_for(timeout).is_none() {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-pub struct SpinLockableMutexGuard<'a> {
-    mutex: &'a SpinLockableMutex,
-    _guard: MutexGuard<'a, ()>,
-}
-
-impl<'a> Drop for SpinLockableMutexGuard<'a> {
-    fn drop(&mut self) {
-        self.mutex.locked.store(false, Ordering::Relaxed);
-    }
-}
-
 pub struct FrameSlice {
-    pub index: u64,
+    pub frame_index: u64,
     pub texture: Arc<Texture>,
     pub pose: Pose,
     pub force_idr: bool,
@@ -110,7 +58,6 @@ pub struct PresentData {
     pub frame_index: u64,
     pub layers: Vec<([(Arc<Texture>, TextureBounds); 2], Pose)>,
     pub sync_texture: Arc<Texture>,
-    pub sync_texture_mutex: Arc<SpinLockableMutex>,
     pub force_idr_slice_idxs: Vec<usize>,
 }
 
@@ -221,35 +168,23 @@ pub struct CompositorDesc {
 
 pub struct Compositor {
     encoder_resolution: (u32, u32),
-    rendering_loop: ThreadLoop,
+    thread_loop: ThreadLoop,
 }
 
 impl Compositor {
     pub fn new(
         graphics: Arc<GraphicsContext>,
-        settings: CompositorDesc,
-        mut present_consumer: Consumer<PresentData>,
-        mut slice_producers: Vec<Producer<FrameSlice>>,
+        compositor_desc: CompositorDesc,
+        present_receiver: Receiver<PresentData>,
+        present_done_notif_sender: Sender<()>,
+        slice_senders: Vec<Sender<FrameSlice>>,
+        slice_encoded_notif_receivers: Vec<Receiver<()>>,
     ) -> StrResult<Self> {
         let CompositorDesc {
             target_eye_resolution,
             filter_type,
             ffr_desc,
-        } = settings;
-
-        trace_err!(present_consumer.push(PresentData {
-            frame_index: 0,
-            layers: vec![],
-            sync_texture_mutex: Arc::new(SpinLockableMutex::new()),
-            // temp texture
-            sync_texture: Arc::new(Texture::new(
-                graphics.clone(),
-                (1, 1),
-                Format::Rgba8Unorm,
-                1,
-            )?),
-            force_idr_slice_idxs: vec![],
-        }))?;
+        } = compositor_desc;
 
         let composition_texture = Arc::new(Texture::new(
             graphics.clone(),
@@ -290,11 +225,11 @@ impl Compositor {
         let compressed_frame_resolution =
             (compressed_eye_resolution.0 * 2, compressed_eye_resolution.1);
 
-        let slices_desc =
-            slices_desc_from_count(slice_producers.len(), compressed_frame_resolution);
+        let slices_desc = slices_desc_from_count(slice_senders.len(), compressed_frame_resolution);
         let encoder_resolution = aligned_resolution(slices_desc.single_resolution);
 
-        for (idx, prod) in slice_producers.iter_mut().enumerate() {
+        let mut slice_textures = vec![];
+        for idx in 0..slice_senders.len() {
             let slice_texture = Arc::new(Texture::new(
                 graphics.clone(),
                 encoder_resolution,
@@ -302,12 +237,7 @@ impl Compositor {
                 1,
             )?);
 
-            prod.add(FrameSlice {
-                index: 0,
-                texture: slice_texture.clone(),
-                pose: <_>::default(),
-                force_idr: false,
-            });
+            slice_textures.push(slice_texture.clone());
 
             let start = get_slice_start(idx, &slices_desc);
             let bounds = slice_bounds_to_texture_bounds(
@@ -327,130 +257,102 @@ impl Compositor {
         let rendering_operation_buffer =
             OperationBuffer::new(graphics, &rendering_operation_descs)?;
 
-        let mut layers_buffers_history: Vec<(
-            Vec<[Arc<Texture>; 2]>,
-            (OperationBuffer, Vec<Arc<UniformBuffer>>),
-        )> = vec![];
-        let mut render = move || -> UnitResult {
-            let mut frame_index = 0;
-            let mut force_idr_slice_idxs = vec![];
-            let pose;
+        let render = move |layers_buffers_history: &mut Vec<_>| -> StrResult {
+            let present_data = trace_err!(present_receiver.recv_timeout(TIMEOUT))?;
+
+            let graphics = present_data.sync_texture.graphics();
+
+            let current_layers_textures: Vec<_> = present_data
+                .layers
+                .iter()
+                .map(|([(lt, _), (rt, _)], _)| [lt.clone(), rt.clone()])
+                .collect();
+
+            let maybe_layers_buffers = layers_buffers_history
+                .iter()
+                .find(|(l, _)| *l == current_layers_textures)
+                .map(|(_, bufs)| bufs);
+
+            let (composition_operation_buffer, uniform_buffers) = if let Some(bufs) =
+                maybe_layers_buffers
             {
-                let mut maybe_sync_texture_mutex = None;
-                let mut maybe_sync_texture = None;
-                let mut layers = vec![];
-                present_consumer
-                    .consume(TIMEOUT, |present_data| {
-                        layers = present_data.layers.clone();
-                        frame_index = present_data.frame_index;
-                        force_idr_slice_idxs = present_data.force_idr_slice_idxs.clone();
-
-                        present_data.sync_texture_mutex.set_to_locked();
-                        maybe_sync_texture_mutex = Some(present_data.sync_texture_mutex.clone());
-
-                        // return the present_data to openvr regardless the sync texture could be
-                        // taken
-                        present_data
-                            .sync_texture
-                            .acquire_sync(TIMEOUT)
-                            .map_err(|e| debug!("{}", e))
-                            .ok();
-                        maybe_sync_texture = Some(present_data.sync_texture.clone());
-
-                        Ok(())
-                    })
-                    .map_err(|e| debug!("{:?}", e))?;
-
-                let sync_texture = maybe_sync_texture.ok_or(())?;
-                let sync_texture_mutex = maybe_sync_texture_mutex.ok_or(())?;
-                let _sync_texture_guard = sync_texture_mutex.mutex_lock();
-
-                let graphics = sync_texture.graphics();
-
-                let current_layers_textures: Vec<_> = layers
-                    .iter()
-                    .map(|([(lt, _), (rt, _)], _)| [lt.clone(), rt.clone()])
-                    .collect();
-
-                let maybe_layers_buffers = layers_buffers_history
-                    .iter()
-                    .find(|(l, _)| *l == current_layers_textures)
-                    .map(|(_, bufs)| bufs);
-
-                let (operation_buffer, uniform_buffers) = if let Some(bufs) = maybe_layers_buffers {
-                    bufs
-                } else {
-                    if layers_buffers_history.len() >= 3 {
-                        layers_buffers_history.clear();
-                    }
-
-                    let mut operation_descs = vec![];
-                    let mut uniform_buffers = vec![];
-                    for (idx, (eye_layers, _)) in layers.iter().enumerate() {
-                        let [(left_texture, _), (right_texture, _)] = eye_layers;
-
-                        let bounds_uniform_buffer = Arc::new(
-                            UniformBuffer::new::<[TextureBounds; 2]>(graphics.clone())
-                                .map_err(|e| error!("{}", e))?,
-                        );
-
-                        operation_descs.push(get_copy_eye_layers_operation_desc(
-                            [left_texture.clone(), right_texture.clone()],
-                            bounds_uniform_buffer.clone(),
-                            filter_type,
-                            composition_texture.clone(),
-                            idx == 0,
-                        ));
-                        uniform_buffers.push(bounds_uniform_buffer)
-                    }
-
-                    let operation_buffer = OperationBuffer::new(graphics.clone(), &operation_descs)
-                        .map_err(|e| error!("{}", e))?;
-
-                    layers_buffers_history
-                        .push((current_layers_textures, (operation_buffer, uniform_buffers)));
-                    // unwrap is safe because I just added an element.
-                    let (_, bufs) = layers_buffers_history.last().unwrap();
-                    bufs
-                };
-
-                for (([(_, left_bounds), (_, right_bounds)], _), uniform_buffer) in
-                    layers.iter().zip(uniform_buffers)
-                {
-                    uniform_buffer
-                        .write(&[*left_bounds, *right_bounds])
-                        .map_err(|e| error!("{}", e))?;
+                bufs
+            } else {
+                if layers_buffers_history.len() >= 3 {
+                    layers_buffers_history.clear();
                 }
-                operation_buffer.execute();
 
-                // Improvement: use pose to do reprojection
-                pose = layers[0].1;
+                let mut operation_descs = vec![];
+                let mut uniform_buffers = vec![];
+                for (idx, ([(left_texture, _), (right_texture, _)], _)) in
+                    present_data.layers.iter().enumerate()
+                {
+                    let bounds_uniform_buffer =
+                        Arc::new(UniformBuffer::new::<[TextureBounds; 2]>(graphics.clone())?);
 
-                sync_texture.release_sync();
-                // here sync_texture_mutex lock is released
+                    operation_descs.push(get_copy_eye_layers_operation_desc(
+                        [left_texture.clone(), right_texture.clone()],
+                        bounds_uniform_buffer.clone(),
+                        filter_type,
+                        composition_texture.clone(),
+                        idx == 0,
+                    ));
+                    uniform_buffers.push(bounds_uniform_buffer)
+                }
+
+                let operation_buffer = OperationBuffer::new(graphics.clone(), &operation_descs)?;
+
+                layers_buffers_history
+                    .push((current_layers_textures, (operation_buffer, uniform_buffers)));
+                // unwrap is safe because I just added an element.
+                let (_, bufs) = layers_buffers_history.last().unwrap();
+                bufs
+            };
+
+            for (([(_, left_bounds), (_, right_bounds)], _), uniform_buffer) in
+                present_data.layers.iter().zip(uniform_buffers)
+            {
+                uniform_buffer.write(&[*left_bounds, *right_bounds])?;
             }
+
+            composition_operation_buffer.execute();
+
+            trace_err!(present_done_notif_sender.send(()))?;
+
             rendering_operation_buffer.execute();
 
-            for (idx, prod) in slice_producers.iter_mut().enumerate() {
-                prod.fill(TIMEOUT, |slice| {
-                    slice.index = frame_index;
-                    slice.pose = pose;
-                    slice.force_idr = force_idr_slice_idxs.contains(&idx);
-                    Ok(())
-                })
-                .map_err(|e| debug!("{:?}", e))
-                .ok(); // do not early return if error: let the other slices get submitted
+            // Improvement: use pose to do reprojection
+            let pose = present_data.layers[0].1;
+
+            for (idx, sender) in slice_senders.iter().enumerate() {
+                trace_err!(sender.send(FrameSlice {
+                    frame_index: present_data.frame_index,
+                    texture: slice_textures[idx].clone(),
+                    pose,
+                    force_idr: present_data.force_idr_slice_idxs.contains(&idx),
+                }))?
+            }
+
+            for receiver in &slice_encoded_notif_receivers {
+                receiver.recv_timeout(TIMEOUT).ok();
+                // WARNING: if during normal execution (not during shutdown) if one of these
+                // notification fails to arrive before timeout, the graphics runtime
+                // could crash for concurrent use of textures.
+                // todo: use aquire/release_sync
             }
 
             Ok(())
         };
 
-        let rendering_loop = thread_loop::spawn("Compositor loop", move || {
-            render().ok();
+        let mut layers_buffers_history = vec![];
+        let thread_loop = thread_loop::spawn("Compositor loop", move || {
+            render(&mut layers_buffers_history)
+                .map_err(|e| error!("{}", e))
+                .ok();
         })?;
 
         Ok(Self {
-            rendering_loop,
+            thread_loop,
             encoder_resolution,
         })
     }
@@ -460,6 +362,6 @@ impl Compositor {
     }
 
     pub fn request_stop(&mut self) {
-        self.rendering_loop.request_stop()
+        self.thread_loop.request_stop()
     }
 }

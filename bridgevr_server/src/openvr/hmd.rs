@@ -1,6 +1,6 @@
 use super::settings::*;
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{data::*, rendering::*, ring_channel::*};
+use bridgevr_common::{data::*, rendering::*};
 use log::*;
 use openvr_driver_sys as vr;
 use parking_lot::Mutex;
@@ -14,7 +14,7 @@ use std::{
     time::*,
 };
 
-const TIMEOUT: Duration = Duration::from_millis(500);
+pub(super) const TIMEOUT: Duration = Duration::from_millis(500);
 
 const SWAP_TEXTURE_SET_SIZE: usize = 3;
 
@@ -53,17 +53,20 @@ fn pose_from_openvr_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) type AuxiliaryTextureData = vr::VRVulkanTextureData_t;
+#[cfg(not(target_os = "linux"))]
+pub(super) type AuxiliaryTextureData = ();
+
+pub(super) struct CompositorInterop {
+    pub present_sender: Sender<PresentData>,
+    pub present_done_notif_receiver: Receiver<()>,
+}
+
 // The "contexts" are the structs given to the openvr callbacks and are internally mutable.
 // Using internal mutability enables the callbacks to use the contexts concurrently.
-
-#[derive(Default)]
-pub struct AuxiliaryTextureData(#[cfg(target_os = "linux")] vr::VRVulkanTextureData_t);
-
-unsafe impl Send for AuxiliaryTextureData {}
-unsafe impl Sync for AuxiliaryTextureData {}
-
 #[allow(clippy::type_complexity)]
-pub struct HmdContext {
+pub(super) struct HmdContext {
     pub id: Mutex<Option<u32>>,
     pub display_component: Mutex<*mut vr::DisplayComponent>,
     pub virtual_display: Mutex<*mut vr::VirtualDisplay>,
@@ -71,13 +74,16 @@ pub struct HmdContext {
     pub settings: Arc<Mutex<OpenvrSettings>>,
     pub graphics: Arc<GraphicsContext>,
     pub swap_texture_manager: Mutex<SwapTextureManager<AuxiliaryTextureData>>,
-    pub present_producer: Mutex<Option<Producer<PresentData>>>,
     pub current_layers: Mutex<Vec<([(Arc<Texture>, TextureBounds); 2], Pose)>>,
-    pub current_sync_texture_mutex: Mutex<Option<Arc<SpinLockableMutex>>>,
+    pub sync_texture: Mutex<Option<Arc<Texture>>>,
+    pub compositor_interop: Mutex<Option<CompositorInterop>>,
     pub pose: Mutex<vr::DriverPose_t>,
     pub latest_vsync: Mutex<(Instant, u64)>,
     pub shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
 }
+
+unsafe impl Send for HmdContext {}
+unsafe impl Sync for HmdContext {}
 
 unsafe extern "C" fn get_window_bounds(
     context: *mut c_void,
@@ -155,7 +161,9 @@ extern "C" fn compute_distortion(
     }
 }
 
-pub fn create_display_callbacks(hmd_context: Arc<HmdContext>) -> vr::DisplayComponentCallbacks {
+pub(super) fn create_display_callbacks(
+    hmd_context: Arc<HmdContext>,
+) -> vr::DisplayComponentCallbacks {
     vr::DisplayComponentCallbacks {
         context: &*hmd_context as *const _ as _,
         GetWindowBounds: Some(get_window_bounds),
@@ -191,50 +199,43 @@ extern "C" fn virtual_display_present(
     present_info: *const vr::PresentInfo_t,
     _: u32,
 ) {
-    let context = context as *const HmdContext;
+    let context = unsafe { &*(context as *const HmdContext) };
 
     let handle = get_texture_handle(unsafe { (*present_info).backbufferTextureHandle });
 
-    let maybe_texture = unsafe {
-        (*context)
-            .swap_texture_manager
-            .lock()
-            .get(handle)
-            .or_else(|| {
-                #[cfg(target_os = "linux")]
-                let maybe_texture = {
-                    let data = &*((*present_info).backbufferTextureHandle
-                        as *mut vr::VRVulkanTextureData_t);
+    let maybe_texture = context.swap_texture_manager.lock().get(handle).or_else(|| {
+        #[cfg(target_os = "linux")]
+        let maybe_texture = {
+            let data =
+                &*((*present_info).backbufferTextureHandle as *mut vr::VRVulkanTextureData_t);
 
-                    let format = format_from_native(data.m_nFormat);
-                    Texture::from_shared_vulkan_ptrs(
-                        data.m_nImage,
-                        (*context).graphics.clone(),
-                        data.m_pInstance as _,
-                        data.m_pPhysicalDevice as _,
-                        data.m_pDevice as _,
-                        data.m_pQueue as _,
-                        data.m_nQueueFamilyIndex,
-                        (data.m_nWidth, data.m_nHeight),
-                        format,
-                        data.m_nSampleCount as _,
-                    )
-                    .map(Arc::new)
-                };
-                #[cfg(not(target_os = "linux"))]
-                let maybe_texture =
-                    Texture::from_handle(handle, (*context).graphics.clone()).map(Arc::new);
+            let format = format_from_native(data.m_nFormat);
+            Texture::from_shared_vulkan_ptrs(
+                data.m_nImage,
+                context.graphics.clone(),
+                data.m_pInstance as _,
+                data.m_pPhysicalDevice as _,
+                data.m_pDevice as _,
+                data.m_pQueue as _,
+                data.m_nQueueFamilyIndex,
+                (data.m_nWidth, data.m_nHeight),
+                format,
+                data.m_nSampleCount as _,
+            )
+            .map(Arc::new)
+        };
+        #[cfg(not(target_os = "linux"))]
+        let maybe_texture = Texture::from_handle(handle, context.graphics.clone()).map(Arc::new);
 
-                if let Ok(texture) = maybe_texture.as_ref().map_err(|e| debug!("{}", e)) {
-                    (*context)
-                        .swap_texture_manager
-                        .lock()
-                        .add_single(texture.clone());
-                }
+        if let Ok(texture) = maybe_texture.as_ref().map_err(|e| debug!("{}", e)) {
+            context
+                .swap_texture_manager
+                .lock()
+                .add_single(texture.clone());
+        }
 
-                maybe_texture.ok()
-            })
-    };
+        maybe_texture.ok()
+    });
 
     let maybe_frame_timing = {
         let mut frame_timings = vec![
@@ -257,39 +258,36 @@ extern "C" fn virtual_display_present(
         }
     };
 
-    if let (Some(texture), Some(frame_timing), Some(present_producer)) =
-        (&maybe_texture, &maybe_frame_timing, unsafe {
-            &mut *(*context).present_producer.lock()
-        })
-    {
-        let pose = pose_from_openvr_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
+    if let (Some(texture), Some(frame_timing), Some(compositor_interop)) = (
+        &maybe_texture,
+        &maybe_frame_timing,
+        &*context.compositor_interop.lock(),
+    ) {
+        let sync_texture = texture.clone();
+        let res = sync_texture.acquire_sync(TIMEOUT);
 
-        let res = present_producer
-            .fill(TIMEOUT, |present_data| {
-                let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
-                present_data.frame_index = unsafe { (*present_info).nFrameId };
-                present_data.layers = vec![(
-                    [
-                        (texture.clone(), left_bounds),
-                        (texture.clone(), right_bounds),
-                    ],
-                    pose,
-                )];
-                present_data.sync_texture = texture.clone();
-                unsafe {
-                    // NB: this lock is for writing in the contaner for the mutex
-                    *(*context).current_sync_texture_mutex.lock() =
-                        Some(present_data.sync_texture_mutex.clone());
-                }
-
-                // todo force_idr
-
-                Ok(())
-            })
-            .map_err(|e| debug!("{:?}", e));
         if res.is_ok() {
-            present_producer
-                .wait_for_one(TIMEOUT)
+            *context.sync_texture.lock() = Some(sync_texture.clone());
+
+            let pose = pose_from_openvr_matrix(&frame_timing.m_HmdPose.mDeviceToAbsoluteTracking);
+            let [left_bounds, right_bounds] = VIRTUAL_DISPLAY_TEXTURE_BOUNDS;
+            let frame_index = unsafe { (*present_info).nFrameId };
+            let layers = vec![(
+                [
+                    (texture.clone(), left_bounds),
+                    (texture.clone(), right_bounds),
+                ],
+                pose,
+            )];
+
+            compositor_interop
+                .present_sender
+                .send(PresentData {
+                    frame_index,
+                    layers,
+                    sync_texture,
+                    force_idr_slice_idxs: vec![], // todo
+                })
                 .map_err(|e| debug!("{:?}", e))
                 .ok();
         }
@@ -299,16 +297,21 @@ extern "C" fn virtual_display_present(
 }
 
 extern "C" fn wait_for_present(context: *mut c_void) {
-    let context = context as *const HmdContext;
+    let context = unsafe { &*(context as *const HmdContext) };
 
-    if let Some(sync_texture_mutex) = unsafe { (*context).current_sync_texture_mutex.lock().take() }
-    {
-        if !sync_texture_mutex.wait_for_unlock(TIMEOUT) {
-            debug!("Sync texture has not been unlocked");
-        }
+    if let Some(compositor_interop) = &*context.compositor_interop.lock() {
+        compositor_interop
+            .present_done_notif_receiver
+            .recv_timeout(TIMEOUT)
+            .map_err(|e| debug!("{}", e))
+            .ok();
     };
 
-    update_vsync(unsafe { &*context });
+    if let Some(sync_texture) = context.sync_texture.lock().take() {
+        sync_texture.release_sync();
+    }
+
+    update_vsync(context);
 }
 
 unsafe extern "C" fn get_time_since_last_vsync(
@@ -319,13 +322,13 @@ unsafe extern "C" fn get_time_since_last_vsync(
     let context = context as *const HmdContext;
 
     let (vsync_time, vsync_index) = &*(*context).latest_vsync.lock();
-    *seconds_since_last_vsync = (Instant::now() - *vsync_time).as_secs_f32();
+    *seconds_since_last_vsync = (*vsync_time - Instant::now()).as_secs_f32();
     *frame_counter = *vsync_index;
 
     true
 }
 
-pub fn create_virtual_display_callbacks(
+pub(super) fn create_virtual_display_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::VirtualDisplayCallbacks {
     vr::VirtualDisplayCallbacks {
@@ -342,12 +345,12 @@ extern "C" fn create_swap_texture_set(
     swap_texture_set_desc: *const vr::IVRDriverDirectModeComponent_SwapTextureSetDesc_t,
     shared_texture_handles: *mut [vr::SharedTextureHandle_t; 3],
 ) {
-    let context = context as *const HmdContext;
+    let context = unsafe { &*(context as *const HmdContext) };
 
     let maybe_swap_texture_set = unsafe {
         let format = format_from_native((*swap_texture_set_desc).nFormat);
 
-        (*context)
+        context
             .swap_texture_manager
             .lock()
             .create_set(
@@ -366,11 +369,11 @@ extern "C" fn create_swap_texture_set(
     if let Ok((_, data)) = maybe_swap_texture_set {
         #[cfg(target_os = "linux")]
         let shared_texture_handles_vec: Vec<_> = {
-            let instance_ptr = unsafe { (*context).graphics.instance_ptr() };
-            let physical_device_ptr = unsafe { (*context).graphics.physical_device_ptr() };
-            let device_ptr = unsafe { (*context).graphics.device_ptr() };
-            let queue_ptr = unsafe { (*context).graphics.queue_ptr() };
-            let queue_family_index = unsafe { (*context).graphics.queue_family_index() };
+            let instance_ptr = context.graphics.instance_ptr();
+            let physical_device_ptr = context.graphics.physical_device_ptr();
+            let device_ptr = context.graphics.device_ptr();
+            let queue_ptr = context.graphics.queue_ptr();
+            let queue_family_index = context.graphics.queue_family_index();
 
             data.iter()
                 .map(|(handle, storage)| {
@@ -463,51 +466,54 @@ unsafe extern "C" fn submit_layer(
 }
 
 extern "C" fn direct_mode_present(context: *mut c_void, sync_texture: vr::SharedTextureHandle_t) {
-    let context = context as *const HmdContext;
+    let context = unsafe { &*(context as *const HmdContext) };
 
     let sync_handle = get_texture_handle(sync_texture);
-    if let (Some(present_producer), Some(sync_texture)) = unsafe {
-        (
-            &mut *(*context).present_producer.lock(),
-            &mut (*context).swap_texture_manager.lock().get(sync_handle),
-        )
-    } {
-        let res = present_producer
-            .fill(TIMEOUT, |present_data| unsafe {
-                present_data.frame_index = (*context).latest_vsync.lock().1;
-                present_data.layers = (*context).current_layers.lock().drain(..).collect();
-                present_data.sync_texture = sync_texture.clone();
-                // NB: this lock is for writing in the contaner for the mutex
-                *(*context).current_sync_texture_mutex.lock() =
-                    Some(present_data.sync_texture_mutex.clone());
-
-                // todo force_idr
-
-                Ok(())
-            })
-            .map_err(|e| debug!("{:?}", e));
+    if let (Some(compositor_interop), Some(sync_texture)) = (
+        &*context.compositor_interop.lock(),
+        &context.swap_texture_manager.lock().get(sync_handle),
+    ) {
+        let res = sync_texture.acquire_sync(TIMEOUT);
         if res.is_ok() {
-            present_producer
-                .wait_for_one(TIMEOUT)
+            *context.sync_texture.lock() = Some(sync_texture.clone());
+
+            let frame_index = context.latest_vsync.lock().1;
+            let layers = context.current_layers.lock().drain(..).collect();
+            let sync_texture = sync_texture.clone();
+
+            compositor_interop
+                .present_sender
+                .send(PresentData {
+                    frame_index,
+                    layers,
+                    sync_texture,
+                    force_idr_slice_idxs: vec![], // todo
+                })
                 .map_err(|e| debug!("{:?}", e))
                 .ok();
         }
     }
 }
 
-unsafe extern "C" fn post_present(context: *mut c_void) {
-    let context = context as *const HmdContext;
+extern "C" fn post_present(context: *mut c_void) {
+    let context = unsafe { &*(context as *const HmdContext) };
 
-    if let Some(sync_texture_mutex) = (*context).current_sync_texture_mutex.lock().take() {
-        if !sync_texture_mutex.wait_for_unlock(TIMEOUT) {
-            debug!("Sync texture has not been unlocked");
-        }
+    if let Some(compositor_interop) = &*context.compositor_interop.lock() {
+        compositor_interop
+            .present_done_notif_receiver
+            .recv_timeout(TIMEOUT)
+            .map_err(|e| debug!("{}", e))
+            .ok();
     };
 
-    update_vsync(&*context);
+    if let Some(sync_texture) = context.sync_texture.lock().take() {
+        sync_texture.release_sync();
+    }
 
-    let (vsync_time, _) = &*(*context).latest_vsync.lock();
-    thread::sleep((*vsync_time + (*context).settings.lock().frame_interval) - Instant::now());
+    update_vsync(context);
+
+    let (vsync_time, _) = &*context.latest_vsync.lock();
+    thread::sleep((*vsync_time + context.settings.lock().frame_interval) - Instant::now());
 }
 
 extern "C" fn get_frame_timing(
@@ -517,7 +523,7 @@ extern "C" fn get_frame_timing(
     // todo: do something here?
 }
 
-pub fn create_driver_direct_mode_callbacks(
+pub(super) fn create_driver_direct_mode_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::DriverDirectModeComponentCallbacks {
     vr::DriverDirectModeComponentCallbacks {
@@ -546,12 +552,12 @@ unsafe extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRIn
     vr::VRInitError_None
 }
 
-unsafe extern "C" fn deactivate(context: *mut c_void) {
-    let context = context as *const HmdContext;
+extern "C" fn deactivate(context: *mut c_void) {
+    let context = unsafe { &*(context as *const HmdContext) };
 
-    *(*context).id.lock() = None;
+    *context.id.lock() = None;
 
-    (*context)
+    context
         .shutdown_signal_sender
         .lock()
         .send(ShutdownSignal::BackendShutdown)
@@ -589,13 +595,13 @@ extern "C" fn debug_request(_: *mut c_void, _: *const c_char, _: *mut c_char, _:
     // format!("debug request: {}", request)
 }
 
-extern "C" fn get_pose(context: *mut c_void) -> vr::DriverPose_t {
+unsafe extern "C" fn get_pose(context: *mut c_void) -> vr::DriverPose_t {
     let context = context as *const HmdContext;
 
-    unsafe { *(*context).pose.lock() }
+    *(*context).pose.lock()
 }
 
-pub fn create_hmd_callbacks(
+pub(super) fn create_hmd_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::TrackedDeviceServerDriverCallbacks {
     vr::TrackedDeviceServerDriverCallbacks {

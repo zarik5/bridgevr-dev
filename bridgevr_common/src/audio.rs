@@ -1,11 +1,17 @@
-use crate::{ring_channel::*, sockets::*, *};
+use crate::{
+    data::*,
+    event_timing::*,
+    sockets::*,
+    thread_loop::{self, *},
+    *,
+};
 use cpal::{
     traits::{DeviceTrait, EventLoopTrait, HostTrait},
     *,
 };
 use log::*;
 use safe_transmute::*;
-use std::{cmp::min, collections::VecDeque, sync::*, thread::*, time::Duration, *};
+use std::{cmp::min, sync::mpsc::*, sync::*, thread::*, time::Duration, time::*, *};
 
 const TRACE_CONTEXT: &str = "Audio";
 
@@ -70,7 +76,7 @@ impl AudioSession {
                 // the bound check prevents panic
                 devices_and_formats.remove(idx)
             } else {
-                return trace_str!("Index out of bound")
+                return trace_str!("Index out of bound");
             }
         } else {
             match mode {
@@ -96,17 +102,19 @@ impl AudioSession {
         })?;
         trace_err!(event_loop.play_stream(stream.clone()))?;
 
-        let join_handle = Some(trace_err!(thread::Builder::new().name("Audio thread".into()).spawn({
-            let event_loop = event_loop.clone();
-            move || {
-                event_loop.run(move |_, maybe_data| match maybe_data {
-                    Ok(io_data) => {
-                        buffer_callback(io_data);
-                    }
-                    Err(e) => warn!("{}", e),
-                });
-            }
-        }))?);
+        let join_handle = Some(trace_err!(thread::Builder::new()
+            .name("Audio thread".into())
+            .spawn({
+                let event_loop = event_loop.clone();
+                move || {
+                    event_loop.run(move |_, maybe_data| match maybe_data {
+                        Ok(io_data) => {
+                            buffer_callback(io_data);
+                        }
+                        Err(e) => warn!("{}", e),
+                    });
+                }
+            }))?);
 
         Ok(AudioSession {
             event_loop,
@@ -136,7 +144,7 @@ impl AudioRecorder {
     pub fn start_recording(
         device_idx: Option<u64>,
         loopback: bool,
-        mut buffer_producer: Producer<SenderData>,
+        mut packet_enqueuer: PacketEnqueuer,
     ) -> StrResult<AudioRecorder> {
         let mode = if loopback {
             AudioMode::Loopback
@@ -144,38 +152,19 @@ impl AudioRecorder {
             AudioMode::Input
         };
 
-        for _ in 0..3 {
-            buffer_producer.add(SenderData {
-                packet: vec![0; MAX_PACKET_SIZE_BYTES],
-                data_offset: get_data_offset(&())?,
-                data_size: 0,
-            });
-        }
-
-        let mut buffer_index = 0;
-
         let session = trace_err!(AudioSession::start(device_idx, mode, move |io_data| {
             match io_data {
                 StreamData::Input {
                     buffer: UnknownTypeInputBuffer::F32(samples),
                 } => {
-                    let res = buffer_producer.fill(TIMEOUT, |data| {
-                        serialize_indexed_header_into(&mut data.packet, buffer_index, &())
-                            .map_err(|e| error!("{}", e))
-                            .ok();
+                    let audio_packet = AudioPacket {
+                        samples: transmute_to_bytes(&samples[..]),
+                    };
 
-                        let samples_bytes = guarded_transmute_to_bytes_pod_many(&samples[..]);
-                        data.data_size = samples_bytes.len();
-
-                        (&mut data.packet[data.data_offset..(data.data_offset + data.data_size)])
-                            .copy_from_slice(samples_bytes);
-
-                        Ok(())
-                    });
-
-                    if res.is_ok() {
-                        buffer_index += 1;
-                    }
+                    packet_enqueuer
+                        .enqueue(&audio_packet)
+                        .map_err(|e| debug!("{}", e))
+                        .ok();
                 }
                 _ => warn!("[Audio recorder] Invalid format"),
             }
@@ -189,68 +178,137 @@ impl AudioRecorder {
     }
 }
 
+// In the case of buffer underrun, the audio player just wait for new samples.
+// In case the difference between the target sample index and the dequeued buffer sample index is
+// higher than a threshold, jump straight to the received buffer sample index.
+// If not the cases above, if sample dequeue returns immediately then enter resync mode where every
+// n samples a sample is dropped.
+
 pub struct AudioPlayer {
     session: AudioSession,
+    packet_timestamp_thread: ThreadLoop,
 }
 
 impl AudioPlayer {
-    fn copy_audio_buffer(input: &[u8], byte_count: usize, output: &mut VecDeque<f32>) {
-        for chunk in input.chunks_exact(4).take(byte_count / 4) {
-            output.push_back(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-        }
-    }
-
     pub fn start_playback(
         device_idx: Option<u64>,
-        mut buffer_consumer: KeyedConsumer<ReceiverData<()>, u64>,
+        latency_desc: LatencyDesc,
+        mut packet_dequeuer: PacketDequeuer,
     ) -> StrResult<AudioPlayer> {
-        let mut buffer_idx = 0;
-        let mut sample_buffer = VecDeque::new();
+        let (timestamp_packet_sender, timestamp_packet_receiver) = channel();
+
+        let packet_timestamp_thread =
+            thread_loop::spawn("Audio player packet forward loop", move || {
+                let maybe_packet = packet_dequeuer
+                    .dequeue(TIMEOUT)
+                    .map_err(|e| debug!("{}", e));
+
+                if let Ok(packet) = maybe_packet {
+                    let maybe_audio_packet =
+                        packet.get::<AudioPacket>().map_err(|e| debug!("{}", e));
+                    if let Ok(audio_packet) = maybe_audio_packet {
+                        // Ignore the packet if transmute fails. The chance of a packet having the
+                        // length corrupted but resulting valid by bincode is non existent
+                        if let Ok(samples) =
+                            transmute_many::<f32, PermissiveGuard>(audio_packet.samples)
+                        {
+                            timestamp_packet_sender
+                                .send((Instant::now(), samples.to_vec()))
+                                .map_err(|e| debug!("{}", e))
+                                .ok();
+                        }
+                    }
+                }
+            })?;
+
+        let sample_rate_hz = 44100_f32; // todo query
+        let default_buffer_size = 1024_f32; // todo update
+        let notifs_per_sec = sample_rate_hz / default_buffer_size;
+
+        let callback_max_duration = Duration::from_secs_f32(1_f32 / notifs_per_sec);
+
+        let mut event_timing = EventTiming::new(latency_desc, notifs_per_sec);
+
+        // Contains unused samples from the previous packet
+        let mut sample_buffer = vec![];
+
         let session = trace_err!(AudioSession::start(
             device_idx,
             AudioMode::Output,
             move |io_data| {
+                let callback_begin_time = Instant::now();
+                let callback_underrun_deadline = callback_begin_time + callback_max_duration;
+
                 match io_data {
                     StreamData::Output {
                         buffer: UnknownTypeOutputBuffer::F32(mut samples),
                     } => {
-                        let mut sample_idx = 0;
-                        while sample_idx < samples.len() {
-                            let samples_to_copy = min(samples.len(), sample_buffer.len());
-                            samples[sample_idx..(sample_idx + samples_to_copy)]
-                                .copy_from_slice(sample_buffer.as_slices().0);
-                            sample_buffer.drain(0..samples_to_copy);
-                            sample_idx += samples_to_copy;
+                        let mut samples = &mut samples[..];
+                        let max_dequeue_count = min(samples.len(), sample_buffer.len());
 
-                            if sample_idx < samples.len() {
-                                let res = buffer_consumer
-                                    .consume(&buffer_idx, Duration::from_secs(0), |data| {
-                                        Self::copy_audio_buffer(
-                                            &data.packet[..],
-                                            data.packet_size,
-                                            &mut sample_buffer,
-                                        );
-                                        Ok(())
-                                    })
-                                    .map_err(|e| debug!("{:?}", e));
-                                if res.is_ok() {
-                                    buffer_idx += 1;
+                        samples[0..max_dequeue_count].copy_from_slice(
+                            &sample_buffer
+                                .drain(0..max_dequeue_count)
+                                .collect::<Vec<_>>(),
+                        );
+                        samples = &mut samples[max_dequeue_count..];
+
+                        while !samples.is_empty() {
+                            let estimated_underrun_timeout =
+                                if let Some(estimated_underrun_timeout) =
+                                    callback_max_duration.checked_sub(callback_begin_time.elapsed())
+                                {
+                                    estimated_underrun_timeout
                                 } else {
-                                    let res = buffer_consumer.consume_any(TIMEOUT, |idx, data| {
-                                        Self::copy_audio_buffer(
-                                            &data.packet[..],
-                                            data.packet_size,
-                                            &mut sample_buffer,
-                                        );
-                                        // todo: check buffer_idx is not a copy
-                                        buffer_idx = idx + 1;
-                                        Ok(())
-                                    });
-                                    if res.is_err() {
-                                        break;
-                                    }
+                                    break;
+                                };
+
+                            let (arrival_timestamp, received_samples) = if let Ok(pair) =
+                                timestamp_packet_receiver
+                                    .recv_timeout(estimated_underrun_timeout)
+                                    .map_err(|e| debug!("{}", e))
+                            {
+                                pair
+                            } else {
+                                break;
+                            };
+
+                            event_timing
+                                .notify_latency(callback_underrun_deadline - arrival_timestamp);
+                            if let Some(target_latency_deviation) = event_timing
+                                .average_latency()
+                                .checked_sub(event_timing.target_latency())
+                            {
+                                if target_latency_deviation > callback_max_duration {
+                                    // the packet queue length was > 1 for a while, so drop one
+                                    // packet.
+
+                                    // since EventTiming has "momentum", add a fake packet notify to
+                                    // normalize its state and to avoid dropping packets until
+                                    // underrun.
+                                    event_timing.notify_latency(event_timing.target_latency());
+
+                                    continue;
                                 }
                             }
+
+                            let max_copy_count = min(samples.len(), received_samples.len());
+                            samples[0..max_copy_count]
+                                .copy_from_slice(&received_samples[0..max_copy_count]);
+                            samples = &mut samples[max_dequeue_count..];
+
+                            if max_copy_count < received_samples.len() {
+                                // fill sample_buffer with remaining samples
+                                sample_buffer = received_samples[max_copy_count..].to_vec();
+                                break;
+                            }
+                        }
+
+                        if callback_begin_time.elapsed() > callback_max_duration {
+                            debug!("Audio player underrun!");
+
+                            // fake packet notify to account for no packets found
+                            event_timing.notify_latency(Duration::new(0, 0))
                         }
                     }
                     _ => warn!("[Audio player] Invalid Format"),
@@ -258,10 +316,14 @@ impl AudioPlayer {
             }
         ))?;
 
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            packet_timestamp_thread,
+        })
     }
 
     pub fn request_stop(&mut self) {
-        self.session.request_stop()
+        self.session.request_stop();
+        self.packet_timestamp_thread.request_stop()
     }
 }

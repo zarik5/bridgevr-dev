@@ -11,18 +11,18 @@ crate-type = ['lib']
 [dependencies]
 parking_lot = '0.10.0' # Mutex
 bitflags = '1.2.1'
-backtrace = '0.3.41'
-safe-transmute = '0.10.1'
+backtrace = '0.3.42'
+safe-transmute = '0.11.0-rc.2'
 log = '0.4.8'
 serde = { version = '1.0.104', features = ['derive'] }
 serde_json = '1.0.44' # De/serialization for settings
 bincode = '1.2.1' # De/serialization for packets
 statrs = '0.12.0' # Statistical utlities
 gfx-hal = '0.4.1' # Graphics
-# ffmpeg = { git = 'https://github.com/meh/rust-ffmpeg' } # todo: use this if working
 # requires FFMPEG_DIR env var on windows
 ffmpeg-sys = { git = 'https://github.com/meh/rust-ffmpeg-sys' } # Video encoder
 cpal = '0.11.0' # Audio
+laminar = '0.3.2' # Network protocol
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # WARNING: any version change can create undefined behaviour

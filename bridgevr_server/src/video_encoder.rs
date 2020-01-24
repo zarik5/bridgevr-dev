@@ -1,13 +1,12 @@
 use crate::compositor::*;
 use bridgevr_common::{
     data::VideoEncoderDesc,
-    ring_channel::*,
     sockets::*,
     thread_loop::{self, *},
     *,
 };
 use log::debug;
-use std::time::Duration;
+use std::{sync::mpsc::*, time::Duration};
 
 const TRACE_CONTEXT: &str = "Video encoder";
 
@@ -30,8 +29,9 @@ impl VideoEncoder {
         settings: VideoEncoderDesc,
         resolution: (u32, u32),
         frame_rate: u32,
-        mut frame_consumer: Consumer<FrameSlice>,
-        mut packet_producer: Producer<SenderData>,
+        slice_receiver: Receiver<FrameSlice>,
+        slice_encoded_notif_sender: Sender<()>,
+        packet_enqueuer: PacketEnqueuer,
     ) -> StrResult<Self> {
         // let encode_callback = match settings {
         //     VideoEncoderDesc::Nvidia(nv_codec) => {

@@ -1,46 +1,43 @@
-# How BridgeVR works internally
+# How BridgeVR works
 
-## Language and libraries
+## Programming language and libraries
 
-BridgeVR is written in Rust, a fast and secure language that catches most memory related bugs at compile time by prohibiting nullability and enforcing RAII. Rust also excels for its powerful enums (tagged unions) that allow storing without redundancy diverse types of data and help limiting the number of invalid or unexpected states the programs can have.
+BridgeVR is written in Rust, a fast and safe language that catches most memory related bugs at compile time by prohibiting nullability and enforcing RAII. Rust also excels for its powerful enums (tagged unions) that allow storing without redundancy diverse types of data and help limiting the number of invalid or unexpected states the programs can have.
 
 The most important libraries used by BridgeVR are:
 
-* OpenVR driver for the VR server (through a custom wrapper and FFI bindings). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
-* Oculus mobile sdk as Oculus Quest and Go VR client (through FFI bindings).
-* OpenXR as an alternative VR client (limited support). This allows BridgeVR to potentially support an increasing number of VR headsets.
-* gfx-hal for rendering abstraction layer.
-* FFmpeg for video encoder and decoder.
-* CPAL and oboe for audio recording/playback.
-* Servo for settings and packets de/serialization.
-* android-glue for writing all Rust android app.
-* Node.js and Electron for the GUI.
+* [Serde](https://github.com/serde-rs) for settings and packets de/serialization.
+* [Laminar](https://github.com/amethyst/laminar) as the network protocol.
+* [gfx-hal](https://github.com/gfx-rs/gfx) as a graphics abstraction layer.
+* [FFmpeg](https://ffmpeg.org/) for video encoder and decoder.
+* [CPAL](https://github.com/RustAudio/cpal) and [Oboe](https://github.com/google/oboe) for audio recording/playback.
+* [android-glue](https://github.com/rust-windowing/android-rs-glue) for writing all Rust android app.
+* [OpenVR](https://github.com/ValveSoftware/openvr) driver as the VR server (through a custom wrapper and FFI bindings). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
+* [Oculus Mobile SDK](https://developer.oculus.com/downloads/package/oculus-mobile-sdk/) as Oculus Quest and Go VR client (through FFI bindings).
+* [OpenXR](https://www.khronos.org/openxr/) as an alternative VR client (limited support). This allows BridgeVR to potentially support an increasing number of VR headsets.
+* [Node.js](https://nodejs.org/en/) and [Electron](https://www.electronjs.org/) for the GUI.
 
 ## Client-server communication
 
-The client and the server communicate via Wi-Fi mainly through UDP to reduce latency.  
+The client and the server communicate via Wi-Fi through the semi-reliable Laminar protocol.  
 The handshake happens following the procedure shown here:  
 
-```handshake
-      Server      Client
+```
+     Server      Client
         |           |
-       Join        Join
+      Join        Join
     multicast   multicast
         |           |
         |     UDP multicast
-        |         config
-        |        /  |
-   UDP listener <   |
-     receive        |  -------> Client found
+        |        config
+        |       /   |
+  UDP listener <    |
+     receive        |  -----> Client found
         |           |
-   TCP connect      |
-        |   \       |
-        |    > TCP listener
-        |         accept
-     TCP send       |
-      config        |
-        |   \       |
-        |    > TCP receive  --> Client/server connected
+    Reliable        |
+   send config      |
+        |     \     |
+        |      > Receive  --> Client/server connected
         |           |
 ```
 

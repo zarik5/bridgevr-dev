@@ -5,9 +5,7 @@ mod shutdown_signal;
 mod statistics;
 mod video_encoder;
 
-use bridgevr_common::{
-    audio::*, constants::*, data::*, rendering::*, ring_channel::*, sockets::*, *,
-};
+use bridgevr_common::{audio::*, constants::*, data::*, rendering::*, sockets::*, *};
 use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
@@ -33,15 +31,17 @@ const TRACE_CONTEXT: &str = "Driver main";
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 
+const STATISTICS_INTERVAL: Duration = Duration::from_secs(1);
+
 fn get_settings() -> StrResult<Settings> {
     load_settings(env!("SETTINGS_PATH"))
 }
 
 fn begin_server_loop(
     graphics: Arc<GraphicsContext>,
-    openvr_backend: Arc<Mutex<OpenvrBackend>>,
-    shutdown_signal_sender: Sender<ShutdownSignal>,
-    shutdown_signal_receiver: Receiver<ShutdownSignal>,
+    vr_server: Arc<Mutex<VrServer>>,
+    shutdown_signal_sender: mpsc::Sender<ShutdownSignal>,
+    shutdown_signal_receiver: mpsc::Receiver<ShutdownSignal>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 ) -> StrResult {
     let timeout = get_settings()
@@ -50,7 +50,7 @@ fn begin_server_loop(
     let mut deadline = Instant::now() + timeout;
 
     let try_connect = {
-        let openvr_backend = openvr_backend.clone();
+        let vr_server = vr_server.clone();
         move |shutdown_signal_receiver: &Receiver<ShutdownSignal>| -> StrResult<ShutdownSignal> {
             let settings = if let Ok(settings) = get_settings() {
                 settings
@@ -58,11 +58,9 @@ fn begin_server_loop(
                 thread::sleep(Duration::from_secs(1));
                 get_settings()?
             };
-            let receiver_data_port = settings.connection.starting_data_port;
-            let mut next_sender_data_port = settings.connection.starting_data_port;
 
-            let (client_handshake_packet, client_candidate_desc) =
-                search_client(&settings.connection.client_ip, TIMEOUT)?;
+            let (found_client_ip, client_handshake_packet) =
+                search_client(settings.connection.client_ip.clone(), TIMEOUT)?;
 
             if client_handshake_packet.version < BVR_MIN_VERSION_CLIENT {
                 return trace_str!(
@@ -99,37 +97,35 @@ fn begin_server_loop(
                 target_eye_resolution,
             };
 
-            let client_statistics = Arc::new(Mutex::new(ClientStatistics::default()));
-
-            let connection_manager = Arc::new(Mutex::new(ConnectionManager::connect_to_client(
-                client_candidate_desc,
+            let mut connection_manager = ConnectionManager::connect_to_client(
+                found_client_ip,
+                settings.connection.socket_desc.clone(),
                 server_handshake_packet,
                 {
                     let shutdown_signal_sender = shutdown_signal_sender.clone();
-                    let openvr_backend = openvr_backend.clone();
-                    move |message| match message {
-                        ClientMessage::Update(input) => openvr_backend.lock().update_input(&input),
-                        ClientMessage::Statistics(client_stats) => {
-                            *client_statistics.lock() = client_stats
-                        }
-                        ClientMessage::Disconnected => {
-                            shutdown_signal_sender
-                                .send(ShutdownSignal::ClientDisconnected)
-                                .ok();
-                        }
+
+                    // timeout callback
+                    move || {
+                        shutdown_signal_sender
+                            .send(ShutdownSignal::ClientDisconnected)
+                            .ok();
                     }
                 },
-            )?));
+            )?;
 
-            let mut slice_producers = vec![];
-            let mut slice_consumers = vec![];
+            let (present_sender, present_receiver) = channel();
+            let (present_done_notif_sender, present_done_notif_receiver) = channel();
+
+            let mut slice_senders = vec![];
+            let mut slice_encoded_notif_receivers = vec![];
+            let mut slice_interop_encoders = vec![];
             for _ in 0..settings.video.frame_slice_count {
-                let (producer, consumer) = queue_channel_split();
-                slice_producers.push(producer);
-                slice_consumers.push(consumer);
+                let (slice_sender, slice_receiver) = channel();
+                let (slice_encoded_notif_sender, slice_encoded_notif_receiver) = channel();
+                slice_senders.push(slice_sender);
+                slice_encoded_notif_receivers.push(slice_encoded_notif_receiver);
+                slice_interop_encoders.push((slice_receiver, slice_encoded_notif_sender));
             }
-
-            let (present_producer, present_consumer) = queue_channel_split();
 
             let mut compositor = Compositor::new(
                 graphics.clone(),
@@ -138,93 +134,118 @@ fn begin_server_loop(
                     filter_type: settings.video.composition_filtering,
                     ffr_desc: settings.video.foveated_rendering.clone().into_option(),
                 },
-                present_consumer,
-                slice_producers,
+                present_receiver,
+                present_done_notif_sender,
+                slice_senders,
+                slice_encoded_notif_receivers,
             )?;
 
             let video_encoder_resolution = compositor.encoder_resolution();
 
             let mut video_encoders = vec![];
-            for (idx, slice_consumer) in slice_consumers.into_iter().enumerate() {
-                let (video_packet_producer, video_packet_consumer) = queue_channel_split();
+            for (idx, (slice_receiver, slice_encoded_notif_sender)) in
+                slice_interop_encoders.into_iter().enumerate()
+            {
+                let send_mode = if settings.video.reliable {
+                    SendMode::ReliableOrdered
+                } else {
+                    SendMode::UnreliableSequential
+                };
+                let packet_enqueuer =
+                    connection_manager.register_enqueuer(video_stream_id(idx as _), send_mode);
 
                 video_encoders.push(VideoEncoder::new(
                     &format!("Video encoder loop {}", idx),
                     settings.video.encoder.clone(),
                     video_encoder_resolution,
                     client_handshake_packet.fps,
-                    slice_consumer,
-                    video_packet_producer,
+                    slice_receiver,
+                    slice_encoded_notif_sender,
+                    packet_enqueuer,
                 )?);
-
-                connection_manager.lock().begin_send_buffers(
-                    &format!("Video packet sender loop {}", idx),
-                    next_sender_data_port,
-                    video_packet_consumer,
-                )?;
-                next_sender_data_port += 1;
             }
 
             let mut maybe_game_audio_recorder = match &settings.game_audio {
                 Switch::Enabled(desc) => {
-                    let (producer, consumer) = queue_channel_split();
-                    let game_audio_recorder =
-                        AudioRecorder::start_recording(desc.input_device_index, true, producer)?;
-                    connection_manager.lock().begin_send_buffers(
-                        "Game audio send loop",
-                        next_sender_data_port,
-                        consumer,
-                    )?;
-                    Some(game_audio_recorder)
+                    let send_mode = if desc.reliable {
+                        SendMode::ReliableOrdered
+                    } else {
+                        SendMode::UnreliableSequential
+                    };
+                    let packet_enqueuer = connection_manager.register_enqueuer(
+                        game_audio_stream_id(settings.video.frame_slice_count),
+                        send_mode,
+                    );
+
+                    Some(AudioRecorder::start_recording(
+                        desc.input_device_index,
+                        true,
+                        packet_enqueuer,
+                    )?)
                 }
                 Switch::Disabled => None,
             };
 
             let mut maybe_microphone_player = match &settings.microphone {
                 Switch::Enabled(desc) => {
-                    let (producer, consumer) = keyed_channel_split(Duration::from_millis(100));
-                    connection_manager.lock().begin_receive_indexed_buffers(
-                        "Microphone audio receive loop",
-                        receiver_data_port,
-                        producer,
-                    )?;
+                    let packet_dequeuer =
+                        connection_manager.register_dequeuer(MICROPHONE_STREAM_ID);
+
                     Some(AudioPlayer::start_playback(
                         desc.output_device_index,
-                        consumer,
+                        desc.buffering_latency.clone(),
+                        packet_dequeuer,
                     )?)
                 }
                 Switch::Disabled => None,
             };
 
-            openvr_backend
-                .lock()
-                .initialize_for_client_or_request_restart(
-                    &settings,
-                    session_desc_loader.lock().get_mut(),
-                    present_producer,
-                    connection_manager.clone(),
-                )?;
+            let input_dequeuer = connection_manager.register_dequeuer(CLIENT_INPUTS_STREAM_ID);
+            let haptic_enqueuer = connection_manager.register_enqueuer(
+                haptic_stream_id(settings.video.frame_slice_count),
+                SendMode::UnreliableUnordered,
+            );
 
-            let statistics_interval = Duration::from_secs(1);
-            let res = loop {
-                log_statistics();
+            vr_server.lock().initialize_for_client_or_request_restart(
+                &settings,
+                session_desc_loader.lock().get_mut(),
+                present_sender,
+                present_done_notif_receiver,
+                input_dequeuer,
+                haptic_enqueuer,
+            )?;
 
-                match shutdown_signal_receiver.recv_timeout(statistics_interval) {
-                    Ok(signal) => break Ok(signal),
-                    Err(RecvTimeoutError::Disconnected) => {
-                        break Ok(ShutdownSignal::BackendShutdown)
+            let mut client_disconnected_dequeuer =
+                connection_manager.register_dequeuer(CLIENT_DISCONNECTED_STREAM_ID);
+            let mut client_disconnection_watcher_thread =
+                thread_loop::spawn("Client disconnection watcher loop", {
+                    let shutdown_signal_sender = shutdown_signal_sender.clone();
+                    move || {
+                        if let Ok(packet) = client_disconnected_dequeuer.dequeue(TIMEOUT) {
+                            if packet.get::<()>().is_ok() {
+                                shutdown_signal_sender
+                                    .send(ShutdownSignal::ClientDisconnected)
+                                    .ok();
+                            }
+                        }
                     }
-                    _ => (),
+                })?;
+
+            let shutdown_signal = loop {
+                log_statistics(); // todo
+
+                match shutdown_signal_receiver.recv_timeout(STATISTICS_INTERVAL) {
+                    Ok(signal) => break signal,
+                    Err(RecvTimeoutError::Disconnected) => break ShutdownSignal::BackendShutdown,
+                    Err(RecvTimeoutError::Timeout) => continue,
                 }
             };
 
-            if let Ok(ShutdownSignal::BackendShutdown) = res {
-                connection_manager
-                    .lock()
-                    .send_message_tcp(&ServerMessage::Shutdown)
-                    .map_err(|e| debug!("{}", e))
-                    .ok();
-            }
+            connection_manager
+                .register_enqueuer(SERVER_SHUTDOWN_STREAM_ID, SendMode::ReliableUnordered)
+                .enqueue(&())
+                .map_err(|e| debug!("{}", e))
+                .ok();
 
             // Dropping an object that contains a thread loop requires waiting for some actions to
             // timeout. The drops happen sequentially so the time required to execute them is at
@@ -232,8 +253,9 @@ fn begin_server_loop(
             // can buffer all the shutdown requests at once, so if we drop the objects immediately
             // after, the time needed for all drops is at worst the maximum of all the timeouts.
 
-            connection_manager.lock().request_stop();
+            connection_manager.request_stop();
             compositor.request_stop();
+            client_disconnection_watcher_thread.request_stop();
 
             for video_encoder in &mut video_encoders {
                 video_encoder.request_stop();
@@ -247,34 +269,32 @@ fn begin_server_loop(
                 player.request_stop();
             }
 
-            res
+            Ok(shutdown_signal)
         }
     };
 
     trace_err!(thread::Builder::new()
         .name("Connection/statistics loop".into())
-        .spawn(move || {
-            while Instant::now() < deadline {
-                match show_err!(try_connect(&shutdown_signal_receiver)) {
-                    Ok(ShutdownSignal::ClientDisconnected) => deadline = Instant::now() + timeout,
-                    Ok(ShutdownSignal::BackendShutdown) => break,
-                    Err(()) => {
-                        if let Ok(ShutdownSignal::BackendShutdown)
-                        | Err(TryRecvError::Disconnected) = shutdown_signal_receiver.try_recv()
-                        {
-                            break;
-                        }
+        .spawn(move || while Instant::now() < deadline {
+            match show_err!(try_connect(&shutdown_signal_receiver)) {
+                Ok(ShutdownSignal::ClientDisconnected) => deadline = Instant::now() + timeout,
+                Ok(ShutdownSignal::BackendShutdown) => break,
+                Err(()) => {
+                    if let Ok(ShutdownSignal::BackendShutdown) | Err(TryRecvError::Disconnected) =
+                        shutdown_signal_receiver.try_recv()
+                    {
+                        break;
                     }
                 }
-                openvr_backend.lock().deinitialize_for_client();
             }
+            vr_server.lock().deinitialize_for_client();
         })
         .map(|_| ()))
 }
 
-// To make a minimum system, BridgeVR needs to instantiate OpenvrServer.
+// To make a minimum system, BridgeVR needs to instantiate VrServer.
 // This means that most OpenVR related settings cannot be changed while the driver is running.
-// OpenvrServer needs to be instantiated statically because if it get destroyed SteamVR will find
+// VrServer needs to be instantiated statically because if it get destroyed SteamVR will find
 // invalid pointers.
 // Avoid crashing or returning errors, otherwise SteamVR would complain that there is no HMD.
 // If get_settings() returns an error, create the OpenVR server anyway, even if it remains in an
@@ -282,7 +302,7 @@ fn begin_server_loop(
 
 struct EmptySystem {
     graphics: Arc<GraphicsContext>,
-    openvr_backend: Arc<Mutex<OpenvrBackend>>,
+    vr_server: Arc<Mutex<VrServer>>,
     shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
     shutdown_signal_receiver_temp: Arc<Mutex<Option<Receiver<ShutdownSignal>>>>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
@@ -299,7 +319,7 @@ fn create_empty_system() -> StrResult<EmptySystem> {
 
     let (shutdown_signal_sender, shutdown_signal_receiver) = mpsc::channel();
 
-    let openvr_backend = Arc::new(Mutex::new(OpenvrBackend::new(
+    let vr_server = Arc::new(Mutex::new(VrServer::new(
         graphics.clone(),
         maybe_settings.as_ref(),
         &session_desc_loader.lock().get_mut(),
@@ -308,7 +328,7 @@ fn create_empty_system() -> StrResult<EmptySystem> {
 
     Ok(EmptySystem {
         graphics,
-        openvr_backend,
+        vr_server,
         shutdown_signal_sender: Arc::new(Mutex::new(shutdown_signal_sender)),
         shutdown_signal_receiver_temp: Arc::new(Mutex::new(Some(shutdown_signal_receiver))),
         session_desc_loader,
@@ -333,14 +353,14 @@ pub unsafe extern "C" fn HmdDriverFactory(
         let sys = (*MAYBE_EMPTY_SYSTEM).as_ref()?;
         begin_server_loop(
             sys.graphics.clone(),
-            sys.openvr_backend.clone(),
+            sys.vr_server.clone(),
             sys.shutdown_signal_sender.lock().clone(),
             // this unwrap is safe because `shutdown_signal_receiver_temp` has just been set
             sys.shutdown_signal_receiver_temp.lock().take().unwrap(),
             sys.session_desc_loader.clone(),
         )?;
 
-        Ok(sys.openvr_backend.lock().server_ptr())
+        Ok(sys.vr_server.lock().server_ptr())
     };
 
     match try_create_server() {

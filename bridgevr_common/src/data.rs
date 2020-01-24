@@ -99,9 +99,10 @@ pub enum FrameSize {
     Absolute(u32, u32),
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum LatencyDesc {
     Automatic {
+        default_ms: u32,
         expected_misses_per_hour: u32,
         history_mean_lifetime_s: u32,
     },
@@ -111,10 +112,25 @@ pub enum LatencyDesc {
     },
 }
 
+// the following settings are explained here:
+// https://docs.rs/laminar/0.3.2/laminar/struct.Config.html
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SocketDesc {
+    pub idle_connection_timeout_ms: Option<u64>, // this should be comprehensive of the running start setup time
+    pub max_packet_size: Option<u64>,
+    pub receive_buffer_max_size: Option<u64>,
+    pub rtt_smoothing_factor: Option<f32>, // todo: maybe unused?
+    pub rtt_max_value: Option<u16>,        // todo: maybe unused?
+    pub socket_event_buffer_size: Option<u64>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConnectionDesc {
+    pub server_idle_shutdown_timeout_ms: u64,
     pub client_ip: Option<String>,
-    pub starting_data_port: u16,
+    pub server_port: u16,
+    pub client_port: u16,
+    pub socket_desc: SocketDesc,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -147,20 +163,28 @@ pub struct VideoDesc {
     pub halve_frame_rate: bool,
     pub composition_filtering: CompositionFilteringType,
     pub foveated_rendering: Switch<FoveatedRenderingDesc>,
-    pub frame_slice_count: u64,
+    pub frame_slice_count: u8,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
-    pub frame_latency: LatencyDesc,
-    pub head_pose_latency: LatencyDesc,
+    pub buffering_frame_latency: LatencyDesc,
+    pub buffering_head_pose_latency: LatencyDesc,
+    pub reliable: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum AudioFormat {
+    Bit16,
+    Bit24,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AudioDesc {
     pub input_device_index: Option<u64>,
     pub output_device_index: Option<u64>,
-    pub max_packet_size: u64,
-    pub latency: LatencyDesc,
-    pub resync_speed: f32, // audio seconds per seconds
+    pub preferred_sample_rate: u16,
+    pub preferred_format: AudioFormat,
+    pub buffering_latency: LatencyDesc,
+    pub reliable: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -335,9 +359,6 @@ pub struct ClientHandshakePacket {
     pub fps: u32,
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub struct ClientStatistics {}
-
 #[derive(Serialize, Deserialize)]
 pub struct ServerHandshakePacket {
     pub version: Version,
@@ -354,9 +375,20 @@ pub struct HapticData {
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum ServerMessage {
-    Haptic(HapticData),
-    Shutdown,
+pub struct VideoPacket<'a> {
+    pub slice_index: u8,
+    pub nal_index: u64,
+    pub sub_nal_index: u8,
+    pub sub_nal_count: u8,
+    pub hmd_pose: Pose,
+    pub sub_nal: &'a [u8],
+}
+
+// Since BridgeVR does not attempt at any clock synchronization, sending a timestamp is useless
+#[derive(Serialize, Deserialize)]
+pub struct AudioPacket<'a> {
+    // unfortunately serde does not support slice formats other than u8
+    pub samples: &'a [u8],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -367,25 +399,14 @@ pub struct MotionData {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct ClientUpdate {
+pub struct ClientInputs {
     pub motion_data: MotionData,
     pub input_device_data: InputDeviceData,
     pub vsync_offset_ns: i32,
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum ClientMessage {
-    Update(Box<ClientUpdate>),
-    Statistics(ClientStatistics),
-    Disconnected,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct VideoPacketHeader {
-    pub sub_nal_idx: u8,
-    pub sub_nal_count: u8,
-    pub hmd_pose: Pose,
-}
+#[derive(Serialize, Deserialize, Default)]
+pub struct ClientStatistics {}
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SessionDesc {

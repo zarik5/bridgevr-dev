@@ -1,11 +1,11 @@
-use crate::timeout_map::TimeoutMap;
+use crate::{data::LatencyDesc, timeout_map::TimeoutMap};
 use statrs::function::erf::erfc_inv;
 use std::{f32::consts::*, time::*};
 
 const MAX_LATENCY: Duration = Duration::from_millis(500);
 
-fn inverse_q_of_probability(misses_per_sec: f32, fps: f32) -> f32 {
-    let miss_probability = misses_per_sec / fps;
+fn inverse_q_of_probability(misses_per_sec: f32, notifs_per_sec: f32) -> f32 {
+    let miss_probability = misses_per_sec / notifs_per_sec;
     // Q function: https://en.wikipedia.org/wiki/Q-function
     // miss prob = Q(target_latency / stddev)
     // Q^-1(miss prob) = sqrt(2) * erfc^-1(2 * miss prob)
@@ -31,35 +31,71 @@ fn update_latency_variance(
 }
 
 pub struct EventTiming {
+    latency_desc: LatencyDesc,
     unmatched_push_times: TimeoutMap<u64, Instant>,
     unmatched_pop_times: TimeoutMap<u64, Instant>,
     inverse_q_of_prob: f32,
     history_count: f32,
     latency_average_s: f32,
     latency_variance_s: f32,
-    offset_divider: u32,
 }
 
 impl EventTiming {
-    pub fn new(
-        accepted_misses: u32,
-        over_duration: Duration,
-        fps: f32,
-        defaut_latency: Duration,
-        history_mean_lifetime: Duration,
-        offset_divider: u32,
-    ) -> Self {
-        let inverse_q_of_prob =
-            inverse_q_of_probability(accepted_misses as f32 / over_duration.as_secs_f32(), fps);
+    pub fn new(latency_desc: LatencyDesc, notifs_per_sec: f32) -> Self {
+        let inverse_q_of_prob;
+        let history_mean_lifetime_s_f32;
+        let latency_average_s;
+        match latency_desc {
+            LatencyDesc::Automatic {
+                default_ms,
+                expected_misses_per_hour,
+                history_mean_lifetime_s,
+            } => {
+                let accepted_misses_per_sec = expected_misses_per_hour * 60 * 60;
+                inverse_q_of_prob =
+                    inverse_q_of_probability(accepted_misses_per_sec as _, notifs_per_sec);
+                history_mean_lifetime_s_f32 = history_mean_lifetime_s as f32;
+                latency_average_s = default_ms as f32 / 1000_f32;
+            }
+            LatencyDesc::Manual {
+                ms,
+                history_mean_lifetime_s,
+            } => {
+                inverse_q_of_prob = 1_f32;
+                history_mean_lifetime_s_f32 = history_mean_lifetime_s as f32;
+                latency_average_s = ms as f32 / 1000_f32;
+            }
+        }
 
         Self {
+            latency_desc,
             unmatched_push_times: TimeoutMap::new(MAX_LATENCY),
             unmatched_pop_times: TimeoutMap::new(MAX_LATENCY),
             inverse_q_of_prob,
-            history_count: history_mean_lifetime.as_secs_f32() * fps,
-            latency_average_s: defaut_latency.as_secs_f32(),
-            latency_variance_s: defaut_latency.as_secs_f32() / inverse_q_of_prob,
-            offset_divider,
+            history_count: history_mean_lifetime_s_f32 * notifs_per_sec,
+            latency_average_s,
+            latency_variance_s: latency_average_s / inverse_q_of_prob,
+        }
+    }
+
+    pub fn reset_notifs_per_sec(&mut self, notifs_per_sec: f32) {
+        match self.latency_desc {
+            LatencyDesc::Automatic {
+                expected_misses_per_hour,
+                history_mean_lifetime_s,
+                ..
+            } => {
+                let accepted_misses_per_sec = expected_misses_per_hour * 60 * 60;
+                self.inverse_q_of_prob =
+                    inverse_q_of_probability(accepted_misses_per_sec as _, notifs_per_sec);
+                self.history_count = history_mean_lifetime_s as f32 * notifs_per_sec;
+            }
+            LatencyDesc::Manual {
+                history_mean_lifetime_s,
+                ..
+            } => {
+                self.history_count = history_mean_lifetime_s as f32 * notifs_per_sec;
+            }
         }
     }
 
@@ -68,18 +104,10 @@ impl EventTiming {
         self.unmatched_push_times.insert(id, Instant::now());
     }
 
-    fn get_latency_offset(&self) -> Duration {
-        // miss prob = Q(target latency / stddev)
-        // target latency = sqrt(latency variance) * Q^-1(miss prob)
-        let target_latency_s = self.latency_variance_s.sqrt() * self.inverse_q_of_prob;
-
-        Duration::from_secs_f32(self.latency_average_s - target_latency_s)
-    }
-
     // This should be called for every id in increasing order.
     // Returns a latency correction offset to be used to delay or anticipate the events that lead
     // to the `notify_push` calls.
-    pub fn notify_pop(&mut self, id: u64) -> Duration {
+    pub fn notify_pop(&mut self, id: u64) {
         let now = Instant::now();
         self.unmatched_pop_times.insert(id, now);
 
@@ -94,12 +122,14 @@ impl EventTiming {
                     self.history_count,
                     latency_sample_s,
                 );
-                self.latency_variance_s = update_latency_variance(
-                    self.latency_variance_s,
-                    self.latency_average_s,
-                    self.history_count,
-                    latency_sample_s,
-                );
+                if let LatencyDesc::Automatic { .. } = self.latency_desc {
+                    self.latency_variance_s = update_latency_variance(
+                        self.latency_variance_s,
+                        self.latency_average_s,
+                        self.history_count,
+                        latency_sample_s,
+                    );
+                }
                 pop_ids_to_be_removed.push(id);
             }
         }
@@ -109,8 +139,34 @@ impl EventTiming {
         for id in pop_ids_to_be_removed {
             self.unmatched_pop_times.remove(&id);
         }
+    }
 
-        // dividing by the history depth 
-        self.get_latency_offset() / self.offset_divider
+    // equivalent to notify_push() + notify_pop() calls with `latency` interval between them.
+    pub fn notify_latency(&mut self, latency: Duration) {
+        let latency_sample_s = latency.as_secs_f32();
+
+        self.latency_average_s =
+            update_latency_average(self.latency_average_s, self.history_count, latency_sample_s);
+
+        if let LatencyDesc::Automatic { .. } = self.latency_desc {
+            self.latency_variance_s = update_latency_variance(
+                self.latency_variance_s,
+                self.latency_average_s,
+                self.history_count,
+                latency_sample_s,
+            );
+        }
+    }
+
+    pub fn target_latency(&self) -> Duration {
+        // miss prob = Q(target latency / stddev)
+        // target latency = sqrt(latency variance) * Q^-1(miss prob)
+        Duration::from_secs_f32(self.latency_variance_s.sqrt() * self.inverse_q_of_prob)
+        // Note: if manual latency is choosen, latency_variance_s is default latency and
+        // inverse_q_of_prob is 1.
+    }
+
+    pub fn average_latency(&self) -> Duration {
+        Duration::from_secs_f32(self.latency_average_s)
     }
 }

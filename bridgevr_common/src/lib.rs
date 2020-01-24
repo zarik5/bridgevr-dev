@@ -4,14 +4,13 @@ pub use logging::StrResult;
 
 pub mod audio;
 pub mod constants;
-pub mod input_mapping;
 pub mod data;
 pub mod event_timing;
+pub mod ffmpeg;
 pub mod ffr;
+pub mod frame_slices;
+pub mod input_mapping;
 pub mod rendering;
-pub mod ring_channel;
 pub mod sockets;
 pub mod thread_loop;
 pub mod timeout_map;
-pub mod frame_slices;
-pub mod ffmpeg;
