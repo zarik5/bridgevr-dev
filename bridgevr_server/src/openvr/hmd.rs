@@ -63,8 +63,6 @@ pub(super) struct CompositorInterop {
     pub present_done_notif_receiver: Receiver<()>,
 }
 
-// The "contexts" are the structs given to the openvr callbacks and are internally mutable.
-// Using internal mutability enables the callbacks to use the contexts concurrently.
 #[allow(clippy::type_complexity)]
 pub(super) struct HmdContext {
     pub id: Mutex<Option<u32>>,

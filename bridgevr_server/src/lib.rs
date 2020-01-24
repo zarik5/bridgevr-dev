@@ -10,6 +10,7 @@ use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
 use openvr::*;
+use parking_lot::Mutex;
 use shutdown_signal::ShutdownSignal;
 use statistics::*;
 use std::{
@@ -21,11 +22,6 @@ use std::{
     time::*,
 };
 use video_encoder::*;
-
-// BridgeVR uses parking_lot's mutex because it unlocks itself in case of a thread that holds the
-// lock panics. This reduces the chance of SteamVR noticing the crash and displaying "headset not
-// found" error.
-use parking_lot::Mutex;
 
 const TRACE_CONTEXT: &str = "Driver main";
 
@@ -247,12 +243,6 @@ fn begin_server_loop(
                 .map_err(|e| debug!("{}", e))
                 .ok();
 
-            // Dropping an object that contains a thread loop requires waiting for some actions to
-            // timeout. The drops happen sequentially so the time required to execute them is at
-            // worst the sum of all timeouts. By calling request_stop() on all objects involved I
-            // can buffer all the shutdown requests at once, so if we drop the objects immediately
-            // after, the time needed for all drops is at worst the maximum of all the timeouts.
-
             connection_manager.request_stop();
             compositor.request_stop();
             client_disconnection_watcher_thread.request_stop();
@@ -291,14 +281,6 @@ fn begin_server_loop(
         })
         .map(|_| ()))
 }
-
-// To make a minimum system, BridgeVR needs to instantiate VrServer.
-// This means that most OpenVR related settings cannot be changed while the driver is running.
-// VrServer needs to be instantiated statically because if it get destroyed SteamVR will find
-// invalid pointers.
-// Avoid crashing or returning errors, otherwise SteamVR would complain that there is no HMD.
-// If get_settings() returns an error, create the OpenVR server anyway, even if it remains in an
-// unusable state.
 
 struct EmptySystem {
     graphics: Arc<GraphicsContext>,

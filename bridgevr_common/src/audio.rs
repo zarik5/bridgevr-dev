@@ -178,12 +178,6 @@ impl AudioRecorder {
     }
 }
 
-// In the case of buffer underrun, the audio player just wait for new samples.
-// In case the difference between the target sample index and the dequeued buffer sample index is
-// higher than a threshold, jump straight to the received buffer sample index.
-// If not the cases above, if sample dequeue returns immediately then enter resync mode where every
-// n samples a sample is dropped.
-
 pub struct AudioPlayer {
     session: AudioSession,
     packet_timestamp_thread: ThreadLoop,

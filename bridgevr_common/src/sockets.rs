@@ -1,13 +1,3 @@
-// Using multiple UDP sockets is often unnecessary
-//https://stackoverflow.com/questions/53573805/does-passing-data-through-multiple-udp-ports-increase-performance
-// and maybe detrimental
-// https://discordapp.com/channels/564087419918483486/588170196968013845/644523694051426352
-// In BridgeVR case tightly coupling the packet producers and consumers with one socket each can
-// avoid one memcpy per packet, but one the other hand a decoupled architecture with one or more
-// sockets has the benefit of priority control and simplified memory management.
-// Using laminar I need one copy for send and 2 for receive. If I rewrite the receive part so that
-// the receiving end is responsible of creating the buffers, I can achieve 1 copy only
-
 use crate::{data::*, thread_loop::ThreadLoop, *};
 use laminar::{Config, LinkConditioner, Packet, Socket, SocketEvent};
 use log::*;
@@ -181,11 +171,6 @@ pub struct ConnectionManager {
     send_request_enqueuer: Sender<SendRequest>,
     receive_buffer_enqueuers: Arc<Mutex<HashMap<u8, Sender<Vec<u8>>>>>,
     return_buffer_enqueuer: Sender<Vec<u8>>,
-    // send_queue: BinaryHeap<PacketWithStreamId>,
-
-    // Vec<u8> implements Write. Written data is appended.
-    // Must be cleared before sending new data.
-    // send_message_buffer: Arc<Mutex<Vec<u8>>>,
 }
 
 impl ConnectionManager {
