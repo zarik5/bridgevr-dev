@@ -13,4 +13,4 @@
 
 [How it works internally](todo link)
 
-[Contribute](todo link)
+[Contribute](../CONTRIBUTING.md)

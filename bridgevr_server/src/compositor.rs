@@ -36,7 +36,7 @@ fn get_copy_eye_layers_operation_desc(
     let shader = match filter_type {
         CompositionFilteringType::NearestNeighbour => COPY_EYE_LAYERS_NEAREST_SHADER_STR.to_owned(),
         CompositionFilteringType::Bilinear => COPY_EYE_LAYERS_BILINEAR_SHADER_STR.to_owned(),
-        CompositionFilteringType::Lanczos => COPY_EYE_LAYERS_LANCZOS_SHADER_STR.to_owned(),
+        CompositionFilteringType::Lanczos(_) => COPY_EYE_LAYERS_LANCZOS_SHADER_STR.to_owned(),
     };
     OperationDesc::Rendering {
         input_textures: input_textures.to_vec(),

@@ -509,6 +509,7 @@ impl FfmpegVideoDecoder {
                 hw_format = AVPixelFormat::AV_PIX_FMT_D3D11;
                 hw_device_type = AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA;
             }
+            _ => return trace_str!("Invalid decoder type: {:?}", decoder_type),
         };
 
         let mut hw_device_ref_ptr = null_mut();
@@ -602,6 +603,7 @@ impl FfmpegVideoDecoder {
                             )?);
                             texture_callback(&texture, frame_id as _);
                         }
+                        _ => return trace_str!("Invalid decoder type: {:?}", self.decoder_type),
                     }
 
                     break Ok(FfmpegResultOk::SomeOutput);

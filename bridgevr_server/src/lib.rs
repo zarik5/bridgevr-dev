@@ -41,7 +41,7 @@ fn begin_server_loop(
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 ) -> StrResult {
     let timeout = get_settings()
-        .map(|s| Duration::from_secs(s.openvr.timeout_seconds))
+        .map(|s| Duration::from_secs(s.openvr.server_idle_timeout_s))
         .unwrap_or(TIMEOUT);
     let mut deadline = Instant::now() + timeout;
 
@@ -88,14 +88,16 @@ fn begin_server_loop(
             };
 
             let server_handshake_packet = ServerHandshakePacket {
-                version: BVR_VERSION_SERVER,
+                config: ServerConfig {
+                    version: BVR_VERSION_SERVER,
+                    target_eye_resolution,
+                },
                 settings: settings.clone(),
-                target_eye_resolution,
             };
 
             let mut connection_manager = ConnectionManager::connect_to_client(
                 found_client_ip,
-                settings.connection.socket_desc.clone(),
+                settings.connection.config.clone(),
                 server_handshake_packet,
                 {
                     let shutdown_signal_sender = shutdown_signal_sender.clone();

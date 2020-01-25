@@ -26,3 +26,7 @@ By calling request_stop() on all objects involved I can buffer all the shutdown 
 To make a minimum system, BridgeVR needs to instantiate VrServer. This means that most OpenVR related settings cannot be changed while the driver is running.
 VrServer needs to be instantiated statically because if it get destroyed SteamVR will find invalid pointers.  
 Avoid crashing or returning errors, otherwise SteamVR would complain that there is no HMD. If get_settings() returns an error, create the OpenVR server anyway, even if it remains in an unusable state.
+
+## usize in packets
+
+`usize` should never be used in packets because its size is hardware dependent and can cause deserialization to fail. Since Settings is also included in packets, this also applies to settings.

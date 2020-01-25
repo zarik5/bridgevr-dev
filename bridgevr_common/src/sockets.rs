@@ -174,25 +174,40 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
-    fn create_socket_config(socket_desc: SocketDesc) -> Config {
+    fn create_config(socket_config: SocketConfig) -> Config {
         let mut config = Config::default();
         config.blocking_mode = false;
         config.heartbeat_interval = None;
 
-        if let Some(value) = socket_desc.idle_connection_timeout_ms {
+        if let Some(value) = socket_config.idle_connection_timeout_ms {
             config.idle_connection_timeout = Duration::from_millis(value);
         }
-        if let Some(value) = socket_desc.max_packet_size {
+        if let Some(value) = socket_config.max_packet_size {
             config.max_packet_size = value as _;
         }
-        if let Some(value) = socket_desc.rtt_smoothing_factor {
+        if let Some(value) = socket_config.max_fragments {
+            config.max_fragments = value;
+        }
+        if let Some(value) = socket_config.fragment_size {
+            config.fragment_size = value;
+        }
+        if let Some(value) = socket_config.fragment_reassembly_buffer_size {
+            config.fragment_reassembly_buffer_size = value;
+        }
+        if let Some(value) = socket_config.receive_buffer_max_size {
+            config.receive_buffer_max_size = value as _;
+        }
+        if let Some(value) = socket_config.rtt_smoothing_factor {
             config.rtt_smoothing_factor = value;
         }
-        if let Some(value) = socket_desc.rtt_max_value {
+        if let Some(value) = socket_config.rtt_max_value {
             config.rtt_max_value = value;
         }
-        if let Some(value) = socket_desc.socket_event_buffer_size {
+        if let Some(value) = socket_config.socket_event_buffer_size {
             config.socket_event_buffer_size = value as _;
+        }
+        if let Some(value) = socket_config.max_packets_in_flight {
+            config.max_packets_in_flight = value;
         }
 
         config
@@ -201,10 +216,10 @@ impl ConnectionManager {
     fn create_connection_manager(
         local_address: SocketAddr,
         peer_address: SocketAddr,
-        socket_desc: SocketDesc,
+        socket_config: SocketConfig,
         mut timeout_callback: impl FnMut() + Send + 'static,
     ) -> StrResult<Self> {
-        let config = Self::create_socket_config(socket_desc);
+        let config = Self::create_config(socket_config);
         let mut socket = trace_err!(
             Socket::bind_with_config(local_address, config),
             "Handshake failed"
@@ -307,7 +322,7 @@ impl ConnectionManager {
 
     pub fn connect_to_client(
         found_client_ip: IpAddr,
-        socket_desc: SocketDesc,
+        socket_config: SocketConfig,
         handshake_packet: ServerHandshakePacket,
         timeout_callback: impl FnMut() + Send + 'static,
     ) -> StrResult<Self> {
@@ -330,7 +345,7 @@ impl ConnectionManager {
         Self::create_connection_manager(
             server_address,
             client_address,
-            socket_desc,
+            socket_config,
             timeout_callback,
         )
     }
@@ -394,11 +409,7 @@ impl ConnectionManager {
         let connection_manager = Self::create_connection_manager(
             client_address,
             server_address,
-            server_handshake_packet
-                .settings
-                .connection
-                .socket_desc
-                .clone(),
+            server_handshake_packet.settings.connection.config.clone(),
             timeout_callback,
         )?;
 

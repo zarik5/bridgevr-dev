@@ -6,10 +6,10 @@ mod vr_client;
 
 #[cfg(target_os = "android")]
 mod oboe;
-#[cfg(not(target_os = "android"))]
-mod openxr;
 #[cfg(target_os = "android")]
 mod ovr;
+#[cfg(not(target_os = "android"))]
+mod openxr;
 
 use bridgevr_common::{data::*, rendering::*, sockets::*, *};
 use compositor::*;
@@ -22,10 +22,10 @@ use std::{
 };
 use vr_client::*;
 
-#[cfg(not(target_os = "android"))]
-use bridgevr_common::audio::*;
 #[cfg(target_os = "android")]
 use oboe::*;
+#[cfg(not(target_os = "android"))]
+use bridgevr_common::audio::*;
 
 const TRACE_CONTEXT: &str = "App main";
 

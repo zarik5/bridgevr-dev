@@ -1,5 +1,4 @@
-// WARNING: never use usize in in packets because its size is hardware dependent and deserialization
-// can fail
+#![allow(clippy::large_enum_variant)]
 
 use crate::{constants::Version, *};
 use bitflags::bitflags;
@@ -57,12 +56,10 @@ pub enum FfmpegVideoEncoderType {
     VideoToolbox,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+// Do not cfg-gate: The server must accept any value to support any type of client
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum FfmpegVideoDecoderType {
-    #[cfg(target_os = "android")]
     MediaCodec,
-
-    #[cfg(windows)]
     D3D11VA,
 }
 
@@ -89,7 +86,6 @@ pub struct FfmpegVideoCodecDesc {
     pub priv_data_options: Vec<FfmpegOption>,
     pub codec_open_options: Vec<(String, String)>,
     pub frame_options: Vec<FfmpegOption>,
-    pub vendor_specific_context_options: Vec<(String, String)>,
     pub hw_frames_context_options: Vec<FfmpegOption>,
 }
 
@@ -112,42 +108,49 @@ pub enum LatencyDesc {
     },
 }
 
-// the following settings are explained here:
-// https://docs.rs/laminar/0.3.2/laminar/struct.Config.html
 #[derive(Serialize, Deserialize, Clone)]
-pub struct SocketDesc {
-    pub idle_connection_timeout_ms: Option<u64>, // this should be comprehensive of the running start setup time
+pub struct SocketConfig {
+    pub idle_connection_timeout_ms: Option<u64>,
     pub max_packet_size: Option<u64>,
+    pub max_fragments: Option<u8>,
+    pub fragment_size: Option<u16>,
+    pub fragment_reassembly_buffer_size: Option<u16>,
     pub receive_buffer_max_size: Option<u64>,
-    pub rtt_smoothing_factor: Option<f32>, // todo: maybe unused?
-    pub rtt_max_value: Option<u16>,        // todo: maybe unused?
+    pub rtt_smoothing_factor: Option<f32>,
+    pub rtt_max_value: Option<u16>,
     pub socket_event_buffer_size: Option<u64>,
+    pub max_packets_in_flight: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ConnectionDesc {
-    pub server_idle_shutdown_timeout_ms: u64,
     pub client_ip: Option<String>,
     pub server_port: u16,
     pub client_port: u16,
-    pub socket_desc: SocketDesc,
+    pub config: SocketConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum VideoEncoderDesc {
-    Ffmpeg(FfmpegVideoEncoderType, FfmpegVideoCodecDesc),
+    Ffmpeg {
+        hardware_context: FfmpegVideoEncoderType,
+        config: FfmpegVideoCodecDesc,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum VideoDecoderDesc {
-    Ffmpeg(FfmpegVideoDecoderType, FfmpegVideoCodecDesc),
+    Ffmpeg {
+        hardware_context: FfmpegVideoDecoderType,
+        config: FfmpegVideoCodecDesc,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum CompositionFilteringType {
     NearestNeighbour,
     Bilinear,
-    Lanczos,
+    Lanczos(f32),
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -158,12 +161,23 @@ pub struct FoveatedRenderingDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub enum VideoCoding {
+    None,
+    VideoEncoderDecoder {
+        encoder: VideoEncoderDesc,
+        decoder: VideoDecoderDesc,
+    }
+    // ...more to come ;)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct VideoDesc {
     pub frame_size: FrameSize,
-    pub halve_frame_rate: bool,
+    pub preferred_framerate: u16,
     pub composition_filtering: CompositionFilteringType,
     pub foveated_rendering: Switch<FoveatedRenderingDesc>,
     pub frame_slice_count: u8,
+    pub video_coding: VideoCoding,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
     pub buffering_frame_latency: LatencyDesc,
@@ -227,7 +241,7 @@ pub struct OpenvrProp {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OpenvrDesc {
-    pub timeout_seconds: u64,
+    pub server_idle_timeout_s: u64,
     pub block_standby: bool,
     pub input_mapping: [Vec<(String, InputType, Vec<String>)>; 2],
     pub compositor_type: CompositorType,
@@ -237,15 +251,18 @@ pub struct OpenvrDesc {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct OculusGoDesc {
-    default_controller_poses: (Pose, Pose),
-    openvr_rotation_only_fallback: bool,
-    eye_level_height_meters: f32,
+pub struct MotionModel3DofDesc {
+    fix_threshold_meters_per_seconds_squared: f32,
+    drift_threshold_radians_per_seconds: f32,
+    drift_speed_meters_per_second: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HeadsetsDesc {
-    oculus_go: OculusGoDesc,
+    untracked_default_controller_poses: (Pose, Pose),
+    head_height_3dof_meters: f32,
+    head_motion_model_3dof: Switch<MotionModel3DofDesc>,
+    controllers_motion_model_3dof: Switch<MotionModel3DofDesc>
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -357,13 +374,23 @@ pub struct ClientHandshakePacket {
     pub native_eye_resolution: (u32, u32),
     pub fov: [Fov; 2],
     pub fps: u32,
+    pub max_video_encoder_instances: u8,
+    pub available_audio_player_sample_rates: Vec<u32>,
+    pub preferred_audio_player_sample_rates: u32,
+    pub available_microphone_sample_rates: Vec<u32>,
+    pub preferred_microphone_sample_rates: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub version: Version,
+    pub target_eye_resolution: (u32, u32),
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ServerHandshakePacket {
-    pub version: Version,
+    pub config: ServerConfig,
     pub settings: Settings,
-    pub target_eye_resolution: (u32, u32),
 }
 
 #[derive(Serialize, Deserialize)]
