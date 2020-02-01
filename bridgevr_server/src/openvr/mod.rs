@@ -8,7 +8,6 @@ use bridgevr_common::{
     input_mapping::*,
     rendering::*,
     sockets::*,
-    thread_loop::{self, *},
     *,
 };
 use hmd::*;
@@ -151,14 +150,16 @@ extern "C" fn run_frame(context: *mut c_void) {
                 for (device_type, ctx) in &context.tracked_devices_contexts {
                     let haptic = unsafe { event.data.hapticVibration };
                     if haptic.componentHandle == *ctx.haptic_component.lock() {
-                        let haptic_data = HapticData {
+                        let packet = OtherServerPacket::Haptic {
                             device_type: *device_type,
-                            amplitude: haptic.fAmplitude,
-                            duration_seconds: haptic.fDurationSeconds,
-                            frequency: haptic.fFrequency,
+                            sample: HapticSample {
+                                amplitude: haptic.fAmplitude,
+                                duration_seconds: haptic.fDurationSeconds,
+                                frequency: haptic.fFrequency,
+                            },
                         };
                         haptic_enqueuer
-                            .enqueue(&haptic_data)
+                            .enqueue(&packet)
                             .map_err(|e| debug!("{}", e))
                             .ok();
                     }
@@ -196,8 +197,10 @@ pub struct VrServer {
     server: *mut vr::ServerTrackedDeviceProvider,
     server_context: Arc<ServerContext>,
     hmd_context: Option<Arc<HmdContext>>,
-    tracked_devices_contexts: Vec<(TrackedDeviceType, Arc<TrackedDeviceContext>)>,
-    input_thread: Option<ThreadLoop>,
+    tracked_devices_contexts: HashMap<TrackedDeviceType, Arc<TrackedDeviceContext>>,
+    // input_thread: Option<ThreadLoop>,
+    input_timer: Instant,
+    controllers_contexts: Vec<Arc<TrackedDeviceContext>>,
 }
 
 unsafe impl Send for VrServer {}
@@ -305,78 +308,96 @@ impl VrServer {
 
         let server = unsafe { vr::vrCreateServerTrackedDeviceProvider(server_callbacks) };
 
+        let controllers_contexts = tracked_devices_contexts
+            .iter()
+            .map(|(_, ctx)| ctx.clone())
+            .collect::<Vec<_>>();
         VrServer {
             settings: openvr_settings,
             server,
             server_context,
             hmd_context: maybe_hmd_context,
-            tracked_devices_contexts,
-            input_thread: None,
+            tracked_devices_contexts: tracked_devices_contexts.into_iter().collect(),
+            input_timer: Instant::now(),
+            controllers_contexts,
         }
     }
 
-    fn process_input(
-        input: ClientInputs,
-        tracked_device_contexts: &HashMap<TrackedDeviceType, Arc<TrackedDeviceContext>>,
-        controllers_contexts: &[Arc<TrackedDeviceContext>],
-        pose_timer: &mut Instant,
-        additional_pose_time_offset_ns: &mut i64,
+    pub fn process_motion(
+        &mut self,
+        device_type: TrackedDeviceType,
+        sample: MotionSample6DofDesc,
+        timestamp_ns: u64,
     ) {
-        let pose_time_ns = input.motion_data.time_ns as i64;
+        let pose_timestamp_ns = timestamp_ns as i64;
 
-        let server_time_ns = pose_timer.elapsed().as_nanos() as i64;
-        let pose_time_offset_ns = server_time_ns + *additional_pose_time_offset_ns - pose_time_ns;
+        let server_elapsed_ns = self.input_timer.elapsed().as_nanos() as i64;
+        let pose_time_offset_ns = server_elapsed_ns - pose_timestamp_ns;
         if pose_time_offset_ns < 0 {
-            *additional_pose_time_offset_ns = -(server_time_ns - pose_time_ns);
+            self.input_timer -= Duration::from_nanos(pose_time_offset_ns as _);
         } else if pose_time_offset_ns > RESET_POSE_TIMING_THRESHOLD_NS {
-            *additional_pose_time_offset_ns =
-                -(server_time_ns + RESET_POSE_TIMING_THRESHOLD_NS - pose_time_ns);
+            self.input_timer -= Duration::from_nanos(
+                (server_elapsed_ns + RESET_POSE_TIMING_THRESHOLD_NS - pose_timestamp_ns) as _,
+            );
         }
 
-        let offset_time_ns = pose_time_ns - *additional_pose_time_offset_ns;
+        if let Some(context) = self.tracked_devices_contexts.get(&device_type) {
+            let driver_pose = &mut *context.pose.lock();
 
-        for (device_type, motion) in input.motion_data.motion_descs {
-            if let Some(context) = tracked_device_contexts.get(&device_type) {
-                let driver_pose = &mut *context.pose.lock();
+            let p = sample.pose.position;
+            let o = sample.pose.orientation;
+            let v = sample.linear_velocity;
+            let av = sample.angular_velocity;
+            driver_pose.vecPosition = [p[0] as _, p[1] as _, p[2] as _];
+            driver_pose.vecVelocity = [v[0] as _, v[1] as _, v[2] as _];
+            driver_pose.qRotation = vr::HmdQuaternion_t {
+                w: o[0] as _,
+                x: o[1] as _,
+                y: o[2] as _,
+                z: o[3] as _,
+            };
+            driver_pose.vecAngularVelocity = [av[0] as _, av[1] as _, av[2] as _];
+            // todo: check if sign needs to be flipped
+            driver_pose.poseTimeOffset = (self.input_timer.elapsed().as_nanos() as i64
+                - pose_timestamp_ns) as f64
+                / 1_000_000_f64;
 
-                let p = motion.pose.position;
-                let o = motion.pose.orientation;
-                let v = motion.linear_velocity;
-                let av = motion.angular_velocity;
-                driver_pose.vecPosition = [p[0] as _, p[1] as _, p[2] as _];
-                driver_pose.vecVelocity = [v[0] as _, v[1] as _, v[2] as _];
-                driver_pose.qRotation = vr::HmdQuaternion_t {
-                    w: o[0] as _,
-                    x: o[1] as _,
-                    y: o[2] as _,
-                    z: o[3] as _,
+            if let Some(object_id) = *context.object_id.lock() {
+                unsafe {
+                    vr::vrServerDriverHostTrackedDevicePoseUpdated(
+                        object_id,
+                        driver_pose,
+                        size_of::<vr::DriverPose_t>() as _,
+                    )
                 };
-                driver_pose.vecAngularVelocity = [av[0] as _, av[1] as _, av[2] as _];
-                // todo: check if sign needs to be flipped
-                driver_pose.poseTimeOffset = (pose_timer.elapsed().as_nanos() as i64
-                    - offset_time_ns) as f64
-                    / 1_000_000_f64;
-
-                if let Some(object_id) = *context.object_id.lock() {
-                    unsafe {
-                        vr::vrServerDriverHostTrackedDevicePoseUpdated(
-                            object_id,
-                            driver_pose,
-                            size_of::<vr::DriverPose_t>() as _,
-                        )
-                    };
-                }
             }
         }
+    }
 
-        // As an optimization, let only the controllers receive input data.
-        let input = input_device_data_to_str_value(&input.input_device_data);
-        for ctx in controllers_contexts {
+    pub fn update_virtual_vsync(&mut self, virtual_vsync_offset_ns: i32) {
+        if let Some(hmd_context) = &self.hmd_context {
+            let (vsync, _) = &mut *hmd_context.latest_vsync.lock();
+
+            // workaround for forbidden negative Duration
+            let abs_offset = Duration::from_nanos(virtual_vsync_offset_ns.abs() as _);
+            if virtual_vsync_offset_ns > 0 {
+                *vsync += abs_offset;
+            } else {
+                *vsync -= abs_offset;
+            }
+        }
+    }
+
+    pub fn process_input(&self, data: InputDeviceData, timestamp_ns: u64) {
+        let input_timestamp_ns = timestamp_ns as i64;
+        let input = input_device_data_to_str_value_map(&data);
+
+        for ctx in &self.controllers_contexts {
             let component_map = ctx.input_to_component_map.lock();
             for (path, value) in &input {
                 if let Some(component) = component_map.get(*path) {
-                    let time_offset_s = (pose_timer.elapsed().as_nanos() as i64 - offset_time_ns)
-                        as f64
+                    let time_offset_s = (self.input_timer.elapsed().as_nanos() as i64
+                        - input_timestamp_ns) as f64
                         / 1_000_000_f64;
                     unsafe {
                         match value {
@@ -411,7 +432,6 @@ impl VrServer {
         session_desc: &SessionDesc,
         present_sender: Sender<PresentData>,
         present_done_notif_receiver: Receiver<()>,
-        mut input_dequeuer: PacketDequeuer,
         haptic_enqueuer: PacketEnqueuer,
     ) -> StrResult {
         // the same openvr settings instance is shared between hmd, controllers and server.
@@ -440,42 +460,13 @@ impl VrServer {
             }
         } else {
             *self.settings.lock() = new_settings;
+            *self.server_context.haptic_enqueuer.lock() = Some(haptic_enqueuer);
             if let Some(hmd_context) = &self.hmd_context {
                 *hmd_context.compositor_interop.lock() = Some(CompositorInterop {
                     present_sender,
                     present_done_notif_receiver,
                 });
             }
-
-            *self.server_context.haptic_enqueuer.lock() = Some(haptic_enqueuer);
-
-            let mut pose_timer = Instant::now();
-            let mut additional_pose_time_offset_ns = 0;
-            let tracked_devices_contexts = self
-                .tracked_devices_contexts
-                .iter()
-                .map(|(device_type, ctx)| (*device_type, ctx.clone()))
-                .collect();
-            let controllers_contexts = self
-                .tracked_devices_contexts
-                .iter()
-                .map(|(_, ctx)| ctx.clone())
-                .collect::<Vec<_>>();
-            self.input_thread = Some(thread_loop::spawn("OpenVR input loop", move || {
-                let maybe_packet = input_dequeuer.dequeue(TIMEOUT).map_err(|e| debug!("{}", e));
-                if let Ok(packet) = maybe_packet {
-                    let maybe_input = packet.get().map_err(|e| debug!("{}", e));
-                    if let Ok(input) = maybe_input {
-                        Self::process_input(
-                            input,
-                            &tracked_devices_contexts,
-                            &controllers_contexts,
-                            &mut pose_timer,
-                            &mut additional_pose_time_offset_ns,
-                        );
-                    }
-                }
-            })?);
 
             // todo: notify settings changes to openvr using properties
         }

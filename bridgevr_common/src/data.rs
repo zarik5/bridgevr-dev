@@ -37,10 +37,26 @@ pub struct Pose {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct MotionDesc {
+pub struct MotionSample3DofDesc {
+    pub default_position: [f32; 3],
+    pub orientation: [f32; 4],
+    pub linear_velocity: [f32; 3],
+    pub angular_velocity: [f32; 3],
+    pub linear_acceleration: [f32; 3],
+    pub angular_acceleration: [f32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MotionSample6DofDesc {
     pub pose: Pose,
     pub linear_velocity: [f32; 3],
     pub angular_velocity: [f32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum MotionSampleDesc {
+    Dof3(MotionSample3DofDesc),
+    Dof6(MotionSample6DofDesc),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -310,14 +326,6 @@ pub struct ServerHandshakePacket {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct HapticData {
-    pub device_type: TrackedDeviceType,
-    pub duration_seconds: f32,
-    pub frequency: f32,
-    pub amplitude: f32,
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct VideoPacket<'a> {
     pub nal_index: u64,
     pub sub_nal_index: u8,
@@ -334,9 +342,26 @@ pub struct AudioPacket<'a> {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct MotionData {
-    pub time_ns: u64,
-    pub motion_descs: Vec<(TrackedDeviceType, MotionDesc)>,
+pub struct HapticSample {
+    pub duration_seconds: f32,
+    pub frequency: f32,
+    pub amplitude: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum OtherServerPacket {
+    Haptic {
+        device_type: TrackedDeviceType,
+        sample: HapticSample,
+    },
+    Shutdown,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct DeviceMotionDesc {
+    pub device_type: TrackedDeviceType,
+    pub sample: MotionSampleDesc,
+    pub timestamp_ns: u64,
 }
 
 bitflags! {
@@ -423,18 +448,25 @@ pub enum InputDeviceData {
         touchpad_vertical: f32,
         digital_input: OculusGoDigitalInput,
     },
-    OculusHands([Vec<MotionDesc>; 2]),
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ClientInputs {
-    pub motion_data: MotionData,
-    pub input_device_data: InputDeviceData,
-    pub vsync_offset_ns: i32,
+    OculusHands([Vec<MotionSampleDesc>; 2]),
 }
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct ClientStatistics {}
+
+#[derive(Serialize, Deserialize)]
+pub enum OtherClientPacket {
+    MotionAndTiming {
+        device_motions: Vec<DeviceMotionDesc>,
+        virtual_vsync_offset_ns: i32,
+    },
+    InputDeviceData {
+        data: InputDeviceData,
+        timestamp_ns: u64,
+    },
+    Statistics(ClientStatistics),
+    Disconnected,
+}
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SessionDesc {

@@ -1,5 +1,6 @@
 mod compositor;
 mod logging_backend;
+mod motion_model_3dof;
 mod openvr;
 mod shutdown_signal;
 mod statistics;
@@ -27,7 +28,7 @@ const TRACE_CONTEXT: &str = "Driver main";
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 
-const STATISTICS_INTERVAL: Duration = Duration::from_secs(1);
+const STATISTICS_MAX_INTERVAL: Duration = Duration::from_secs(1);
 
 fn get_settings() -> StrResult<Settings> {
     load_settings(env!("SETTINGS_PATH"))
@@ -36,8 +37,8 @@ fn get_settings() -> StrResult<Settings> {
 fn begin_server_loop(
     graphics: Arc<GraphicsContext>,
     vr_server: Arc<Mutex<VrServer>>,
-    shutdown_signal_sender: mpsc::Sender<ShutdownSignal>,
-    shutdown_signal_receiver: mpsc::Receiver<ShutdownSignal>,
+    shutdown_signal_sender: Sender<ShutdownSignal>,
+    shutdown_signal_receiver: Receiver<ShutdownSignal>,
     session_desc_loader: Arc<Mutex<SessionDescLoader>>,
 ) -> StrResult {
     let timeout = get_settings()
@@ -149,8 +150,8 @@ fn begin_server_loop(
                 } else {
                     SendMode::UnreliableSequential
                 };
-                let packet_enqueuer =
-                    connection_manager.register_enqueuer(video_stream_id(idx as _), send_mode);
+                let packet_enqueuer = connection_manager
+                    .register_enqueuer(StreamType::VideoSlice(idx as _), send_mode);
 
                 video_encoders.push(VideoEncoder::new(
                     &format!("Video encoder loop {}", idx),
@@ -170,10 +171,8 @@ fn begin_server_loop(
                     } else {
                         SendMode::UnreliableSequential
                     };
-                    let packet_enqueuer = connection_manager.register_enqueuer(
-                        game_audio_stream_id(settings.video.frame_slice_count),
-                        send_mode,
-                    );
+                    let packet_enqueuer =
+                        connection_manager.register_enqueuer(StreamType::GameAudio, send_mode);
 
                     Some(AudioRecorder::start_recording(
                         desc.input_device_index,
@@ -187,7 +186,7 @@ fn begin_server_loop(
             let mut maybe_microphone_player = match &settings.microphone {
                 Switch::Enabled(desc) => {
                     let packet_dequeuer =
-                        connection_manager.register_dequeuer(MICROPHONE_STREAM_ID);
+                        connection_manager.register_dequeuer(StreamType::Microphone);
 
                     Some(AudioPlayer::start_playback(
                         desc.output_device_index,
@@ -198,56 +197,70 @@ fn begin_server_loop(
                 Switch::Disabled => None,
             };
 
-            let input_dequeuer = connection_manager.register_dequeuer(CLIENT_INPUTS_STREAM_ID);
-            let haptic_enqueuer = connection_manager.register_enqueuer(
-                haptic_stream_id(settings.video.frame_slice_count),
-                SendMode::UnreliableUnordered,
-            );
+            let haptic_enqueuer = connection_manager
+                .register_enqueuer(StreamType::Other, SendMode::UnreliableUnordered);
 
             vr_server.lock().initialize_for_client_or_request_restart(
                 &settings,
                 session_desc_loader.lock().get_mut(),
                 present_sender,
                 present_done_notif_receiver,
-                input_dequeuer,
                 haptic_enqueuer,
             )?;
 
-            let mut client_disconnected_dequeuer =
-                connection_manager.register_dequeuer(CLIENT_DISCONNECTED_STREAM_ID);
-            let mut client_disconnection_watcher_thread =
-                thread_loop::spawn("Client disconnection watcher loop", {
-                    let shutdown_signal_sender = shutdown_signal_sender.clone();
-                    move || {
-                        if let Ok(packet) = client_disconnected_dequeuer.dequeue(TIMEOUT) {
-                            if packet.get::<()>().is_ok() {
-                                shutdown_signal_sender
-                                    .send(ShutdownSignal::ClientDisconnected)
-                                    .ok();
-                            }
-                        }
-                    }
-                })?;
-
+            let mut other_packet_dequeuer = connection_manager.register_dequeuer(StreamType::Other);
             let shutdown_signal = loop {
-                log_statistics(); // todo
+                if let Ok(packet) = other_packet_dequeuer.dequeue(STATISTICS_MAX_INTERVAL) {
+                    match packet.get::<OtherClientPacket>() {
+                        Ok(OtherClientPacket::MotionAndTiming {
+                            device_motions,
+                            virtual_vsync_offset_ns,
+                        }) => {
+                            let mut vr_server = vr_server.lock();
+                            for device_motion in device_motions {
+                                let sample_6dof = match device_motion.sample {
+                                    MotionSampleDesc::Dof6(sample) => sample,
+                                    MotionSampleDesc::Dof3(_) => {
+                                        // todo: use 3dof to 6dof model
+                                        todo!()
+                                    }
+                                };
 
-                match shutdown_signal_receiver.recv_timeout(STATISTICS_INTERVAL) {
+                                vr_server.process_motion(
+                                    device_motion.device_type,
+                                    sample_6dof,
+                                    device_motion.timestamp_ns,
+                                );
+                            }
+                            vr_server.update_virtual_vsync(virtual_vsync_offset_ns);
+                        }
+                        Ok(OtherClientPacket::InputDeviceData { data, timestamp_ns }) => {
+                            vr_server.lock().process_input(data, timestamp_ns)
+                        }
+                        Ok(OtherClientPacket::Statistics(_)) => {
+                            log_statistics(); // todo
+                        }
+                        Ok(OtherClientPacket::Disconnected) => {
+                            break ShutdownSignal::ClientDisconnected
+                        }
+                        Err(e) => debug!("{}", e),
+                    }
+                }
+
+                match shutdown_signal_receiver.try_recv() {
                     Ok(signal) => break signal,
-                    Err(RecvTimeoutError::Disconnected) => break ShutdownSignal::BackendShutdown,
-                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(TryRecvError::Disconnected) => break ShutdownSignal::BackendShutdown,
+                    Err(TryRecvError::Empty) => continue,
                 }
             };
 
             connection_manager
-                .register_enqueuer(SERVER_SHUTDOWN_STREAM_ID, SendMode::ReliableUnordered)
+                .register_enqueuer(StreamType::Other, SendMode::ReliableUnordered)
                 .enqueue(&())
-                .map_err(|e| debug!("{}", e))
                 .ok();
 
             connection_manager.request_stop();
             compositor.request_stop();
-            client_disconnection_watcher_thread.request_stop();
 
             for video_encoder in &mut video_encoders {
                 video_encoder.request_stop();

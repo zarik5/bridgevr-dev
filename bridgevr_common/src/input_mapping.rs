@@ -7,7 +7,7 @@ pub enum InputValue {
     Skeletal(),
 }
 
-pub fn input_device_data_to_str_value(
+pub fn input_device_data_to_str_value_map(
     input_device_data: &InputDeviceData,
 ) -> Vec<(&str, InputValue)> {
     match input_device_data {

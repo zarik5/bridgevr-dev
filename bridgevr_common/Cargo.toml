@@ -11,11 +11,11 @@ crate-type = ['lib']
 [dependencies]
 parking_lot = '0.10.0' # Mutex
 bitflags = '1.2.1'
-backtrace = '0.3.42'
+backtrace = '0.3.43'
 safe-transmute = '0.11.0-rc.2'
 log = '0.4.8'
 serde = { version = '1.0.104', features = ['derive'] }
-serde_json = '1.0.44' # De/serialization for settings
+serde_json = '1.0.45' # De/serialization for settings
 bincode = '1.2.1' # De/serialization for packets
 statrs = '0.12.0' # Statistical utlities
 gfx-hal = '0.4.1' # Graphics
@@ -23,10 +23,11 @@ gfx-hal = '0.4.1' # Graphics
 ffmpeg-sys = { git = 'https://github.com/meh/rust-ffmpeg-sys' } # Video encoder
 cpal = '0.11.0' # Audio
 laminar = '0.3.2' # Network protocol
+crossbeam-channel = "0.3" # upgrade blocked by laminar leak
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # WARNING: any version change can create undefined behaviour
-gfx-backend-vulkan = { version = '0.4.0' }
+gfx-backend-vulkan = { version = '0.4.1' }
 ash = {version = '0.29.0' }
 
 [target.'cfg(target_os = "linux")'.dependencies]

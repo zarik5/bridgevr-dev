@@ -1,6 +1,5 @@
 mod compositor;
 mod logging_backend;
-mod motion_model_3dof;
 mod video_decoder;
 mod vr_client;
 

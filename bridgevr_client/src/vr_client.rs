@@ -43,7 +43,7 @@ impl VrClient {
         todo!();
     }
 
-    pub fn poll_input(&self) -> (MotionData, InputDeviceData) {
+    pub fn poll_input(&self) -> ClientInputs {
         todo!()
     }
 }

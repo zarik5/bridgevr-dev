@@ -21,7 +21,29 @@ const MULTICAST_ADDR: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 123);
 const HANDSHAKE_PORT: u16 = 9943;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
-const SEND_DEQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
+
+#[derive(Serialize, Deserialize)]
+pub enum StreamType {
+    VideoSlice(u8),
+    GameAudio,
+    Microphone,
+
+    // Other types of streams don't have an ordering requirement and are collected by a single
+    // receiver. This is done to reduce the number of parallel threads needed.
+    // Haptic and shutdown for server; motion, input, statistics and disconnected for client
+    Other,
+}
+
+impl Into<u8> for StreamType {
+    fn into(self) -> u8 {
+        match self {
+            Self::Other => 0,
+            Self::GameAudio => 1,
+            Self::Microphone => 2,
+            Self::VideoSlice(idx) => 3 + idx,
+        }
+    }
+}
 
 pub fn search_client(
     client_ip: Option<String>,
@@ -73,33 +95,11 @@ pub enum SendMode {
     ReliableOrdered,
 }
 
-// Note: Eq uses eq() from PartialEq, it does not need a custom impl
-#[derive(Eq)]
-struct SendRequest(u8, Packet);
-
-impl PartialEq for SendRequest {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Ord for SendRequest {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-
-impl PartialOrd for SendRequest {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 pub struct PacketEnqueuer {
     peer_address: SocketAddr,
     stream_id: u8,
     send_mode: SendMode,
-    send_request_enqueuer: Sender<SendRequest>,
+    packet_sender: crossbeam_channel::Sender<Packet>,
 }
 
 impl PacketEnqueuer {
@@ -122,9 +122,7 @@ impl PacketEnqueuer {
                 Packet::reliable_ordered(self.peer_address, buffer, Some(self.stream_id))
             }
         };
-        trace_err!(self
-            .send_request_enqueuer
-            .send(SendRequest(self.stream_id, packet)))
+        trace_err!(self.packet_sender.send(packet))
     }
 }
 
@@ -166,9 +164,7 @@ impl PacketDequeuer {
 pub struct ConnectionManager {
     peer_address: SocketAddr,
     socket: Socket,
-    send_thread: ThreadLoop,
     receive_thread: ThreadLoop,
-    send_request_enqueuer: Sender<SendRequest>,
     receive_buffer_enqueuers: Arc<Mutex<HashMap<u8, Sender<Vec<u8>>>>>,
     return_buffer_enqueuer: Sender<Vec<u8>>,
 }
@@ -225,25 +221,6 @@ impl ConnectionManager {
             "Handshake failed"
         )?;
 
-        let (send_request_enqueuer, send_request_dequeuer) = channel();
-        let packet_sender = socket.get_packet_sender();
-        let mut send_queue = BinaryHeap::new();
-        let send_thread = thread_loop::spawn("Socket sender loop", move || {
-            // todo: check if sende_queue is useful, if the packet submission is too fast
-            // send_queue becomes useless because it will hold only one send request at a time
-
-            if let Ok(send_request) = send_request_dequeuer.recv_timeout(SEND_DEQUEUE_TIMEOUT) {
-                send_queue.push(send_request);
-                while let Ok(send_request) = send_request_dequeuer.try_recv() {
-                    send_queue.push(send_request);
-                }
-            }
-
-            while let Some(SendRequest(_, packet)) = send_queue.pop() {
-                packet_sender.send(packet).ok();
-            }
-        })?;
-
         let (return_buffer_enqueuer, return_buffer_dequeuer) = channel::<Vec<_>>();
         let event_receiver = socket.get_event_receiver();
         let receive_buffer_enqueuers = Arc::new(Mutex::new(HashMap::<_, Sender<_>>::new()));
@@ -277,29 +254,32 @@ impl ConnectionManager {
         Ok(ConnectionManager {
             peer_address,
             socket,
-            send_thread,
             receive_thread,
-            send_request_enqueuer,
             receive_buffer_enqueuers,
             return_buffer_enqueuer,
         })
     }
 
-    pub fn register_enqueuer(&mut self, stream_id: u8, send_mode: SendMode) -> PacketEnqueuer {
+    pub fn register_enqueuer(
+        &mut self,
+        stream_type: StreamType,
+        send_mode: SendMode,
+    ) -> PacketEnqueuer {
+        let packet_sender = self.socket.get_packet_sender();
         PacketEnqueuer {
             peer_address: self.peer_address,
-            stream_id,
+            stream_id: stream_type.into(),
             send_mode,
-            send_request_enqueuer: self.send_request_enqueuer.clone(),
+            packet_sender,
         }
     }
 
-    pub fn register_dequeuer(&mut self, stream_id: u8) -> PacketDequeuer {
+    pub fn register_dequeuer(&mut self, stream_type: StreamType) -> PacketDequeuer {
         let (receive_buffer_enqueuer, receive_buffer_dequeuer) = channel();
 
         self.receive_buffer_enqueuers
             .lock()
-            .insert(stream_id, receive_buffer_enqueuer);
+            .insert(stream_type.into(), receive_buffer_enqueuer);
 
         PacketDequeuer {
             receive_buffer_dequeuer,
@@ -417,7 +397,6 @@ impl ConnectionManager {
     }
 
     pub fn request_stop(&mut self) {
-        self.send_thread.request_stop();
         self.receive_thread.request_stop();
     }
 }
