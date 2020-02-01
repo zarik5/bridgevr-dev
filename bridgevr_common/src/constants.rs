@@ -1,5 +1,5 @@
-use std::fmt::*;
 use serde::*;
+use std::fmt::*;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, PartialOrd)]
 pub struct Version(u32);

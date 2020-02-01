@@ -12,7 +12,7 @@ Address port used to identify the server during streaming. The handshake port is
 
 Address port used to identify the client during streaming. The handshake port is hardcoded to 9943.
 
-## connection: socket_desc: {...}
+## connection: socket_config
 
 Please refer to [Laminar documentation](https://docs.rs/laminar/0.3.2/laminar/struct.Config.html).
 
@@ -55,12 +55,12 @@ This controls the type of image filtering used by the BridgeVR compositor when t
 This can be either `{ "Enabled": { ... } }` or `"Disabled"`. If enabled:
 
 * `"strength"`: strength of the foveation effect. 0 is equivalent to Disabled.
-* `"shape_ratio"`: this controls the shape of the high quality region. A value between 1.5 an 2 should be used
-* `"vertical_offset"`: this moves the high quality region vertically.
+* `"shape_ratio"`: this controls the shape of the foveal region. A value between 1.5 an 2 should be used
+* `"vertical_offset"`: this moves the foveal region vertically.
 
 ## video: frame_slice_count
 
-Number of parts that the rendered images are subdivided into before being encoded and transmitted. A higher value reduces latency by parallelizing the computation workload. This number is restricted by the number of parallel instances of the video encoder that your GPU supports. On Nvidia GTX and RTX series the maximum number is 2 out of the box. You can find a patch for removing this restriction at [this page](https://github.com/keylase/nvidia-patch). Mind that this restriction is system-wide, so any screen recording software running can create issues.
+Number of parts that the rendered images are subdivided into before being encoded and transmitted. A higher value reduces latency by parallelizing the computation workload. This number is restricted by the number of parallel instances of video encoder that your GPU supports. On Nvidia GTX and RTX series the maximum number is 2 out of the box. Mind that this restriction is system-wide, so any screen recording software running can create issues. You can find a patch for removing this restriction at [this page](https://github.com/keylase/nvidia-patch).
 
 ## video: encoder
 
@@ -73,7 +73,7 @@ This must be set to `{ "FFmpeg": { "hardware_context": {x}, "config": { ... } }`
 
 In `config` are the parameters passed to FFmpeg:
 
-* `"codec_name"`: e.g. `h265_nvenc`
+* `"codec_name"`: e.g. `"h265_nvenc"`
 * `"context_options"`: general settings
 * `"priv_data_options"`: settings relative to specific codec
 * `"codec_open_options"`: same as (and in alternative to) `context_options` but formatted as in ffmpeg command line arguments
@@ -97,16 +97,22 @@ Automatic:
 
 * `"default_ms"`: initial estimation of the target latency. This has effect only the first time you use BridgeVR. The updated value is saved and loaded between sessions.
 * `"expected_misses_per_hour"`: tolerable frequency of stutters caused by a missed deadline of an internal event. This is not guaranteed to be accurate because it assumes the latency samples to be distributed as in a [normal variable](https://en.wikipedia.org/wiki/Normal_distribution). You can lower this value but mind that if set too low it can increase the latency.
-* `"history_mean_lifetime_s"`: the higher the value, the lower the judder, but higher the response time (to e.g. network speed change).
+* `"history_mean_lifetime_s"`: the higher the value, the lower the judder, but higher the response time (to e.g. network congestion change).
 
 Manual:
 
 * `"ms"`: same as `default_ms` but this value is not dynamically updated.
 * `"history_mean_lifetime_s"`: same as for `Automatic`.
 
-## video: buffering_head_pose_latency
+## video: pose_prediction_update_history_mean_lifetime_s
 
-Similar to `buffering_frame_latency`, but this controls the timing for reducing the "black pull" and the positional tracking latency. An high `history_mean_lifetime_s` value is recommended.
+This controls the prediction of the total latency of the streaming pipeline (but do not directly affects it), where a more accurate value means less "black pull" and positional tracking lag. An high value of this setting is recommended because the system is sensitive to pipeline length changes (caused by the timing controlled by `buffering_frame_latency`) and by rotational head acceleration.  
+The system works by sampling two head orientations right before the frame submission to the Oculus runtime using two different temporal offsets around the time of the supposed future vsync. Comparing these two samples with the timestamp of the frame gives an hint on how to tweak the streaming pipeline latency prediction. The system works best then there is a constant speed head rotation. If the head is too still, the prediction jitter would prevail and the latency is updated as a random walk, but this situation should happen rarely. Any rotational head acceleration will throw off the system, but any acceleration is accompained by a deceleration, so the effects cancels out.
+The same latency value is used to predict the pose of the controllers.
+
+## controllers_pose_prediction_multiplier
+
+This is a value in the range [0;1] where 1 means normal prediction (but there could be some judder) and 0 means no prediction (less judder but the controllers lag behind).
 
 ## video: reliable
 
@@ -164,21 +170,24 @@ Each of the two is formatted as: `[[{openvr_path}, {input_type}, [{client_path},
 * `"/input/y/click"`
 * `"/input/y/touch"`
 * `"/input/joystick/click"`
+* `"/input/joystick/touch"`
 * `"/input/joystick/x"`
 * `"/input/joystick/y"`
-* `"/input/joystick/touch"`
+* `"/input/touchpad/click"`
+* `"/input/touchpad/touch"`
+* `"/input/touchpad/x"`
+* `"/input/touchpad/y"`
 * `"/input/trigger/click"`
-* `"/input/trigger/value"`
 * `"/input/trigger/touch"`
+* `"/input/trigger/value"`
 * `"/input/grip/click"`
-* `"/input/grip/value"`
 * `"/input/grip/touch"`
+* `"/input/grip/value"`
 * `"/input/back/click"`
 * `"/input/guide/click"`
 * `"/input/start/click"`
 * `"/input/system/click"`
 * `"/input/application_menu/click"`
-* todo: add missing touchpad
 
 `{input_type}` can be:
 
@@ -186,11 +195,7 @@ Each of the two is formatted as: `[[{openvr_path}, {input_type}, [{client_path},
 * `"NormalizedTwoSided"`: this is for thumbstick or touchpad x/y position
 * `"Boolean"`: for the rest of openvr input types
 
-`{openvr_path}` can be:
-
-* `"/gamepad/left/joystick/x"`
-* `"/gamepad/left/joystick/y"`
-* todo: other in `input_mapping.rs`
+`{client_path}` can be one of the paths found here: [input_mapping.rs](../bridgevr_common/src/input_mapping.rs)
 
 ## openvr: compositor_type
 
@@ -214,11 +219,11 @@ Set this to `[{w}, {h}]` (where `{w}` is width and `{h}` is height) when you wan
 
 Collection of properties relative to the OpenVR HMD tracking device set on activation.
 
-Format: `[{ "code": {n}, "value": {v} }, ... ]`
+Format: `[[{name}, {value}], ... ]`
 
-`code` is an integer corresponding to a property listed [here](https://github.com/ValveSoftware/openvr/blob/master/headers/openvr_driver.h#L307).
+`{name}` is a string corresponding to one of the properties listed [here](https://github.com/ValveSoftware/openvr/blob/master/headers/openvr_driver.h#L307) without `Prop_` prefix and type suffix.
 
-`value` is one of the following:
+`{value}` is one of the following:
 
 * `{ "Bool": {b} }`
 * `{ "Int32": {n} }`
@@ -231,7 +236,7 @@ Format: `[{ "code": {n}, "value": {v} }, ... ]`
 
 Collection of properties relative to the OpenVR controllers tracking devices set on activation.
 
-Format: `[{left}, {right}]` where `{left}` and  `{right}` are settings similar to `hmd_custom_properties`
+Format: `[{left}, {right}]` where `{left}` and `{right}` are settings similar to `hmd_custom_properties`
 
 ## headsets: untracked_default_controller_poses
 
@@ -241,7 +246,7 @@ Format: `[{left}, {right}]`.
 
 Each of left and right contains:
 
-* `"position": [{n}, {n}, {n}]`: corresponds to the position of the hand relative to the head when looking straight ahead.
+* `"position": [{n}, {n}, {n}]`: position of the hand relative to the head when looking straight ahead.
 * `"orientation": [{n}, {n}, {n}, {n}]`: a quaternion as the orientation of the hand relative to the head when looking straight ahead.
 
 ## headsets: head_height_3dof_meters

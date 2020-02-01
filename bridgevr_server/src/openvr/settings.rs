@@ -3,7 +3,7 @@ use log::*;
 use openvr_driver_sys as vr;
 use std::{ffi::*, time::*};
 
-pub(super) const TRACE_CONTEXT: &str = "OpenVR";
+pub const TRACE_CONTEXT: &str = "OpenVR";
 
 const DEFAULT_EYE_RESOLUTION: (u32, u32) = (640, 720);
 
@@ -20,13 +20,11 @@ const DEFAULT_BLOCK_STANDBY: bool = false;
 const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_nanos((1e9 / 60_f32) as u64);
 
 pub struct OpenvrSettings {
+    pub tracked_devices: Vec<OpenvrTrackedDeviceDesc>,
+    pub block_standby: bool,
     pub target_eye_resolution: (u32, u32),
     pub fov: [Fov; 2],
-    pub block_standby: bool,
     pub frame_interval: Duration,
-    pub hmd_custom_properties: Vec<OpenvrProp>,
-    pub controllers_custom_properties: [Vec<OpenvrProp>; 2],
-    pub input_mapping: [Vec<(String, InputType, Vec<String>)>; 2],
 }
 
 pub fn create_openvr_settings(
@@ -34,19 +32,13 @@ pub fn create_openvr_settings(
     session_desc: &SessionDesc,
 ) -> OpenvrSettings {
     let block_standby;
-    let hmd_custom_properties;
-    let controllers_custom_properties;
-    let input_mapping;
+    let tracked_devices;
     if let Some(settings) = settings {
         block_standby = settings.openvr.block_standby;
-        hmd_custom_properties = settings.openvr.hmd_custom_properties.clone();
-        controllers_custom_properties = settings.openvr.controllers_custom_properties.clone();
-        input_mapping = settings.openvr.input_mapping.clone();
+        tracked_devices = settings.openvr.tracked_devices.clone();
     } else {
         block_standby = DEFAULT_BLOCK_STANDBY;
-        hmd_custom_properties = vec![];
-        controllers_custom_properties = [vec![], vec![]];
-        input_mapping = [vec![], vec![]];
+        tracked_devices = vec![];
     };
 
     let fov;
@@ -76,47 +68,55 @@ pub fn create_openvr_settings(
     };
 
     OpenvrSettings {
+        tracked_devices,
+        block_standby,
         target_eye_resolution,
         fov,
-        block_standby,
         frame_interval,
-        hmd_custom_properties,
-        controllers_custom_properties,
-        input_mapping,
     }
 }
 
-pub fn set_custom_props(container: vr::PropertyContainerHandle_t, props: &[OpenvrProp]) {
-    for prop in props {
-        let res = unsafe {
-            match &prop.value {
-                OpenvrPropValue::Bool(value) => {
-                    vr::vrSetBoolProperty(container, prop.code as _, *value)
-                }
-                OpenvrPropValue::Int32(value) => {
-                    vr::vrSetInt32Property(container, prop.code as _, *value)
-                }
-                OpenvrPropValue::Uint64(value) => {
-                    vr::vrSetUint64Property(container, prop.code as _, *value)
-                }
-                OpenvrPropValue::Float(value) => {
-                    vr::vrSetFloatProperty(container, prop.code as _, *value)
-                }
-                OpenvrPropValue::String(value) => {
-                    let c_string = CString::new(value.clone()).unwrap();
-                    vr::vrSetStringProperty(container, prop.code as _, c_string.as_ptr())
-                }
-                OpenvrPropValue::Vector3(value) => vr::vrSetVec3Property(
-                    container,
-                    prop.code as _,
-                    &vr::HmdVector3_t { v: *value },
-                ),
-                OpenvrPropValue::Matrix34(_) => todo!(),
-            }
-        };
+pub fn set_custom_props(
+    container: vr::PropertyContainerHandle_t,
+    props: &[(String, OpenvrPropValue)],
+) {
+    for (prop_name, value) in props {
+        match vr::tracked_device_property_name_to_u32(prop_name) {
+            Ok(code) => {
+                let res = unsafe {
+                    match value {
+                        OpenvrPropValue::Bool(value) => {
+                            vr::vrSetBoolProperty(container, code as _, *value)
+                        }
+                        OpenvrPropValue::Int32(value) => {
+                            vr::vrSetInt32Property(container, code as _, *value)
+                        }
+                        OpenvrPropValue::Uint64(value) => {
+                            vr::vrSetUint64Property(container, code as _, *value)
+                        }
+                        OpenvrPropValue::Float(value) => {
+                            vr::vrSetFloatProperty(container, code as _, *value)
+                        }
+                        OpenvrPropValue::String(value) => {
+                            let c_string = CString::new(value.clone()).unwrap();
+                            vr::vrSetStringProperty(container, code as _, c_string.as_ptr())
+                        }
+                        OpenvrPropValue::Vector3(value) => vr::vrSetVec3Property(
+                            container,
+                            code as _,
+                            &vr::HmdVector3_t { v: *value },
+                        ),
+                    }
+                };
 
-        if res > 0 {
-            warn!("Failed to set openvr property {:?} with code={}", prop, res);
+                if res > 0 {
+                    warn!(
+                        "Failed to set openvr property {} with code={}",
+                        prop_name, res
+                    );
+                }
+            }
+            Err(e) => warn!("{}", e),
         }
     }
 }

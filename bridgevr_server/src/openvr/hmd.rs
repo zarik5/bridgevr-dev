@@ -1,5 +1,5 @@
-use super::settings::*;
-use crate::{compositor::*, shutdown_signal::ShutdownSignal};
+use super::tracked_device::*;
+use crate::compositor::*;
 use bridgevr_common::{data::*, rendering::*};
 use log::*;
 use openvr_driver_sys as vr;
@@ -14,7 +14,7 @@ use std::{
     time::*,
 };
 
-pub(super) const TIMEOUT: Duration = Duration::from_millis(500);
+pub const TIMEOUT: Duration = Duration::from_millis(500);
 
 const SWAP_TEXTURE_SET_SIZE: usize = 3;
 
@@ -54,30 +54,27 @@ fn pose_from_openvr_matrix(matrix: &vr::HmdMatrix34_t) -> Pose {
 }
 
 #[cfg(target_os = "linux")]
-pub(super) type AuxiliaryTextureData = vr::VRVulkanTextureData_t;
+pub type AuxiliaryTextureData = vr::VRVulkanTextureData_t;
 #[cfg(not(target_os = "linux"))]
-pub(super) type AuxiliaryTextureData = ();
+pub type AuxiliaryTextureData = ();
 
-pub(super) struct CompositorInterop {
+pub struct CompositorInterop {
     pub present_sender: Sender<PresentData>,
     pub present_done_notif_receiver: Receiver<()>,
 }
 
 #[allow(clippy::type_complexity)]
-pub(super) struct HmdContext {
-    pub id: Mutex<Option<u32>>,
-    pub display_component: Mutex<*mut vr::DisplayComponent>,
-    pub virtual_display: Mutex<*mut vr::VirtualDisplay>,
-    pub driver_direct_mode_component: Mutex<*mut vr::DriverDirectModeComponent>,
-    pub settings: Arc<Mutex<OpenvrSettings>>,
+pub struct HmdContext {
+    pub tracked_device_context: Arc<TrackedDeviceContext>,
+    pub display_component_ptr: Mutex<*mut vr::DisplayComponent>, // Mutex is needed during initialization
+    pub virtual_display_ptr: Mutex<*mut vr::VirtualDisplay>,
+    pub driver_direct_mode_component_ptr: Mutex<*mut vr::DriverDirectModeComponent>,
     pub graphics: Arc<GraphicsContext>,
     pub swap_texture_manager: Mutex<SwapTextureManager<AuxiliaryTextureData>>,
     pub current_layers: Mutex<Vec<([(Arc<Texture>, TextureBounds); 2], Pose)>>,
     pub sync_texture: Mutex<Option<Arc<Texture>>>,
     pub compositor_interop: Mutex<Option<CompositorInterop>>,
-    pub pose: Mutex<vr::DriverPose_t>,
     pub latest_vsync: Mutex<(Instant, u64)>,
-    pub shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
 }
 
 unsafe impl Send for HmdContext {}
@@ -91,7 +88,11 @@ unsafe extern "C" fn get_window_bounds(
     height: *mut u32,
 ) {
     let context = context as *const HmdContext;
-    let (eye_width, eye_height) = (*context).settings.lock().target_eye_resolution;
+    let (eye_width, eye_height) = (*context)
+        .tracked_device_context
+        .settings
+        .lock()
+        .target_eye_resolution;
     *x = 0;
     *y = 0;
     *width = eye_width * 2;
@@ -108,7 +109,11 @@ unsafe extern "C" fn get_recommended_render_target_size(
     height: *mut u32,
 ) {
     let context = context as *const HmdContext;
-    let (eye_width, eye_height) = (*context).settings.lock().target_eye_resolution;
+    let (eye_width, eye_height) = (*context)
+        .tracked_device_context
+        .settings
+        .lock()
+        .target_eye_resolution;
     *width = eye_width * 2;
     *height = eye_height;
 }
@@ -122,7 +127,11 @@ unsafe extern "C" fn get_eye_output_viewport(
     height: *mut u32,
 ) {
     let context = context as *const HmdContext;
-    let (eye_width, eye_height) = (*context).settings.lock().target_eye_resolution;
+    let (eye_width, eye_height) = (*context)
+        .tracked_device_context
+        .settings
+        .lock()
+        .target_eye_resolution;
     *x = eye_width * (eye as u32);
     *y = 0;
     *width = eye_width;
@@ -138,7 +147,7 @@ unsafe extern "C" fn get_projection_raw(
     bottom: *mut f32,
 ) {
     let context = context as *const HmdContext;
-    let settings = (*context).settings.lock();
+    let settings = (*context).tracked_device_context.settings.lock();
     let eye = eye as usize;
     *left = settings.fov[eye].left;
     *right = settings.fov[eye].right;
@@ -159,9 +168,7 @@ extern "C" fn compute_distortion(
     }
 }
 
-pub(super) fn create_display_callbacks(
-    hmd_context: Arc<HmdContext>,
-) -> vr::DisplayComponentCallbacks {
+pub fn create_display_callbacks(hmd_context: Arc<HmdContext>) -> vr::DisplayComponentCallbacks {
     vr::DisplayComponentCallbacks {
         context: &*hmd_context as *const _ as _,
         GetWindowBounds: Some(get_window_bounds),
@@ -176,7 +183,12 @@ pub(super) fn create_display_callbacks(
 
 fn update_vsync(context: &HmdContext) {
     let (vsync_time, vsync_index) = &mut *context.latest_vsync.lock();
-    let new_vsync_time = *vsync_time + context.settings.lock().frame_interval;
+    let new_vsync_time = *vsync_time
+        + context
+            .tracked_device_context
+            .settings
+            .lock()
+            .frame_interval;
     if new_vsync_time < Instant::now() {
         *vsync_time = new_vsync_time;
     }
@@ -326,7 +338,7 @@ unsafe extern "C" fn get_time_since_last_vsync(
     true
 }
 
-pub(super) fn create_virtual_display_callbacks(
+pub fn create_virtual_display_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::VirtualDisplayCallbacks {
     vr::VirtualDisplayCallbacks {
@@ -511,7 +523,15 @@ extern "C" fn post_present(context: *mut c_void) {
     update_vsync(context);
 
     let (vsync_time, _) = &*context.latest_vsync.lock();
-    thread::sleep((*vsync_time + context.settings.lock().frame_interval) - Instant::now());
+    thread::sleep(
+        (*vsync_time
+            + context
+                .tracked_device_context
+                .settings
+                .lock()
+                .frame_interval)
+            - Instant::now(),
+    );
 }
 
 extern "C" fn get_frame_timing(
@@ -521,7 +541,7 @@ extern "C" fn get_frame_timing(
     // todo: do something here?
 }
 
-pub(super) fn create_driver_direct_mode_callbacks(
+pub fn create_driver_direct_mode_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::DriverDirectModeComponentCallbacks {
     vr::DriverDirectModeComponentCallbacks {
@@ -537,35 +557,19 @@ pub(super) fn create_driver_direct_mode_callbacks(
     }
 }
 
-unsafe extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitError {
-    let context = context as *const HmdContext;
-
-    *(*context).id.lock() = Some(object_id);
-    let container = vr::vrTrackedDeviceToPropertyContainer(object_id);
-
-    //todo: set default props
-
-    set_custom_props(container, &(*context).settings.lock().hmd_custom_properties);
-
-    vr::VRInitError_None
-}
-
-extern "C" fn deactivate(context: *mut c_void) {
+extern "C" fn hmd_activate(context: *mut c_void, object_id: u32) -> vr::EVRInitError {
     let context = unsafe { &*(context as *const HmdContext) };
 
-    *context.id.lock() = None;
-
-    context
-        .shutdown_signal_sender
-        .lock()
-        .send(ShutdownSignal::BackendShutdown)
-        .map_err(|e| debug!("{}", e))
-        .ok();
+    activate(&*context.tracked_device_context as *const _ as _, object_id)
 }
 
-extern "C" fn empty_fn(_: *mut c_void) {}
+extern "C" fn hmd_deactivate(context: *mut c_void) {
+    let context = unsafe { &*(context as *const HmdContext) };
 
-unsafe extern "C" fn get_component(
+    deactivate(&*context.tracked_device_context as *const _ as _)
+}
+
+unsafe extern "C" fn hmd_get_component(
     context: *mut c_void,
     component_name_and_version: *const c_char,
 ) -> *mut c_void {
@@ -575,40 +579,36 @@ unsafe extern "C" fn get_component(
     if component_name_and_version_c_str
         == CStr::from_bytes_with_nul_unchecked(vr::IVRDisplayComponent_Version)
     {
-        *(*context).display_component.lock() as _
+        *(*context).display_component_ptr.lock() as _
     } else if component_name_and_version_c_str
         == CStr::from_bytes_with_nul_unchecked(vr::IVRVirtualDisplay_Version)
     {
-        *(*context).virtual_display.lock() as _
+        *(*context).virtual_display_ptr.lock() as _
     } else if component_name_and_version_c_str
         == CStr::from_bytes_with_nul_unchecked(vr::IVRDriverDirectModeComponent_Version)
     {
-        *(*context).driver_direct_mode_component.lock() as _
+        *(*context).driver_direct_mode_component_ptr.lock() as _
     } else {
         ptr::null_mut()
     }
 }
 
-extern "C" fn debug_request(_: *mut c_void, _: *const c_char, _: *mut c_char, _: u32) {
-    // format!("debug request: {}", request)
+extern "C" fn hmd_get_pose(context: *mut c_void) -> vr::DriverPose_t {
+    let context = unsafe { &*(context as *const HmdContext) };
+
+    get_pose(&*context.tracked_device_context as *const _ as _)
 }
 
-unsafe extern "C" fn get_pose(context: *mut c_void) -> vr::DriverPose_t {
-    let context = context as *const HmdContext;
-
-    *(*context).pose.lock()
-}
-
-pub(super) fn create_hmd_callbacks(
+pub fn create_hmd_callbacks(
     hmd_context: Arc<HmdContext>,
 ) -> vr::TrackedDeviceServerDriverCallbacks {
     vr::TrackedDeviceServerDriverCallbacks {
         context: &*hmd_context as *const _ as _,
-        Activate: Some(activate),
-        Deactivate: Some(deactivate),
+        Activate: Some(hmd_activate),
+        Deactivate: Some(hmd_deactivate),
         EnterStandby: Some(empty_fn),
-        GetComponent: Some(get_component),
+        GetComponent: Some(hmd_get_component),
         DebugRequest: Some(debug_request),
-        GetPose: Some(get_pose),
+        GetPose: Some(hmd_get_pose),
     }
 }

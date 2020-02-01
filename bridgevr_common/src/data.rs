@@ -22,7 +22,7 @@ impl<T> Switch<T> {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub struct Fov {
     pub left: f32,
     pub top: f32,
@@ -30,7 +30,7 @@ pub struct Fov {
     pub bottom: f32,
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Pose {
     pub position: [f32; 3],
     pub orientation: [f32; 4],
@@ -41,6 +41,48 @@ pub struct MotionDesc {
     pub pose: Pose,
     pub linear_velocity: [f32; 3],
     pub angular_velocity: [f32; 3],
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SocketConfig {
+    pub idle_connection_timeout_ms: Option<u64>,
+    pub max_packet_size: Option<u64>,
+    pub max_fragments: Option<u8>,
+    pub fragment_size: Option<u16>,
+    pub fragment_reassembly_buffer_size: Option<u16>,
+    pub receive_buffer_max_size: Option<u64>,
+    pub rtt_smoothing_factor: Option<f32>,
+    pub rtt_max_value: Option<u16>,
+    pub socket_event_buffer_size: Option<u64>,
+    pub max_packets_in_flight: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ConnectionDesc {
+    pub client_ip: Option<String>,
+    pub server_port: u16,
+    pub client_port: u16,
+    pub config: SocketConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub enum FrameSize {
+    Scale(f32),
+    Absolute(u32, u32),
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub enum CompositionFilteringType {
+    NearestNeighbour,
+    Bilinear,
+    Lanczos(f32),
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub struct FoveatedRenderingDesc {
+    strength: f32,
+    shape_ratio: f32,
+    vertical_offset: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -89,47 +131,6 @@ pub struct FfmpegVideoCodecDesc {
     pub hw_frames_context_options: Vec<FfmpegOption>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub enum FrameSize {
-    Scale(f32),
-    Absolute(u32, u32),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub enum LatencyDesc {
-    Automatic {
-        default_ms: u32,
-        expected_misses_per_hour: u32,
-        history_mean_lifetime_s: u32,
-    },
-    Manual {
-        ms: u32,
-        history_mean_lifetime_s: u32,
-    },
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SocketConfig {
-    pub idle_connection_timeout_ms: Option<u64>,
-    pub max_packet_size: Option<u64>,
-    pub max_fragments: Option<u8>,
-    pub fragment_size: Option<u16>,
-    pub fragment_reassembly_buffer_size: Option<u16>,
-    pub receive_buffer_max_size: Option<u64>,
-    pub rtt_smoothing_factor: Option<f32>,
-    pub rtt_max_value: Option<u16>,
-    pub socket_event_buffer_size: Option<u64>,
-    pub max_packets_in_flight: Option<u16>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ConnectionDesc {
-    pub client_ip: Option<String>,
-    pub server_port: u16,
-    pub client_port: u16,
-    pub config: SocketConfig,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub enum VideoEncoderDesc {
     Ffmpeg {
@@ -146,28 +147,17 @@ pub enum VideoDecoderDesc {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub enum CompositionFilteringType {
-    NearestNeighbour,
-    Bilinear,
-    Lanczos(f32),
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub struct FoveatedRenderingDesc {
-    strength: f32,
-    shape_ratio: f32,
-    vertical_offset: f32,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
-pub enum VideoCoding {
-    None,
-    VideoEncoderDecoder {
-        encoder: VideoEncoderDesc,
-        decoder: VideoDecoderDesc,
-    }
-    // ...more to come ;)
+pub enum LatencyDesc {
+    Automatic {
+        default_ms: u32,
+        expected_misses_per_hour: u32,
+        history_mean_lifetime_s: u32,
+    },
+    Manual {
+        ms: u32,
+        history_mean_lifetime_s: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -177,11 +167,12 @@ pub struct VideoDesc {
     pub composition_filtering: CompositionFilteringType,
     pub foveated_rendering: Switch<FoveatedRenderingDesc>,
     pub frame_slice_count: u8,
-    pub video_coding: VideoCoding,
     pub encoder: VideoEncoderDesc,
     pub decoder: VideoDecoderDesc,
     pub buffering_frame_latency: LatencyDesc,
-    pub buffering_head_pose_latency: LatencyDesc,
+    pub pose_prediction_update_history_mean_lifetime_s: u32,
+    // pub pose_prediction_update_min_ang_vel_rad_per_s: f32, // todo check if needed
+    pub non_hmd_devices_pose_prediction_multiplier: f32,
     pub reliable: bool,
 }
 
@@ -201,16 +192,45 @@ pub struct AudioDesc {
     pub reliable: bool,
 }
 
+#[repr(i32)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TrackedDeviceType {
+    HMD = 0, // HMD = 0 is enforced by OpenVR
+    LeftController = 1,
+    RightController = 2,
+    Tracker1 = 3,
+    Tracker2 = 4,
+    Tracker3 = 5,
+    Tracker4 = 6,
+    Tracker5 = 7,
+    Tracker6 = 8,
+    Tracker7 = 9,
+    Tracker8 = 10,
+    Tracker9 = 11,
+    Tracker10 = 12,
+    Tracker11 = 13,
+    Tracker12 = 14,
+    Tracker13 = 15,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct MotionModel3DofDesc {
+    fix_threshold_meters_per_seconds_squared: f32,
+    drift_threshold_radians_per_seconds: f32,
+    drift_speed_meters_per_second: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TrackedDeviceDesc {
+    pub device_type: TrackedDeviceType,
+    pub default_pose: Pose,
+    pub pose_offset: Pose,
+    pub motion_model_3dof: Switch<MotionModel3DofDesc>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum CompositorType {
-    // (default) Use DirectModeDriver interface
-    // cons:
-    // * supperted limited number of color formats
-    // * there can be some glitches with head orientation when more than one layer is submitted
     Custom,
-    // Use  VirtualDisplay interface.
-    // pro: none of Custom mode cons.
-    // cons: tiny bit more latency, potential lower image quality
     SteamVR,
 }
 
@@ -222,47 +242,30 @@ pub enum OpenvrPropValue {
     Float(f32),
     String(String),
     Vector3([f32; 3]),
-    Matrix34([f32; 12]),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub enum InputType {
+pub enum OpenvrInputType {
     Boolean,
     NormalizedOneSided,
     NormalizedTwoSided,
     Skeletal,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct OpenvrProp {
-    pub code: u32,
-    pub value: OpenvrPropValue,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OpenvrTrackedDeviceDesc {
+    pub device_type: TrackedDeviceType,
+    pub properties: Vec<(String, OpenvrPropValue)>,
+    pub input_mapping: Vec<(String, OpenvrInputType, Vec<String>)>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct OpenvrDesc {
-    pub server_idle_timeout_s: u64,
+    pub tracked_devices: Vec<OpenvrTrackedDeviceDesc>,
     pub block_standby: bool,
-    pub input_mapping: [Vec<(String, InputType, Vec<String>)>; 2],
-    pub compositor_type: CompositorType,
+    pub server_idle_timeout_s: u64,
     pub preferred_render_eye_resolution: Option<(u32, u32)>,
-    pub hmd_custom_properties: Vec<OpenvrProp>,
-    pub controllers_custom_properties: [Vec<OpenvrProp>; 2],
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct MotionModel3DofDesc {
-    fix_threshold_meters_per_seconds_squared: f32,
-    drift_threshold_radians_per_seconds: f32,
-    drift_speed_meters_per_second: f32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct HeadsetsDesc {
-    untracked_default_controller_poses: (Pose, Pose),
-    head_height_3dof_meters: f32,
-    head_motion_model_3dof: Switch<MotionModel3DofDesc>,
-    controllers_motion_model_3dof: Switch<MotionModel3DofDesc>
+    pub compositor_type: CompositorType,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -271,13 +274,69 @@ pub struct Settings {
     pub video: VideoDesc,
     pub game_audio: Switch<AudioDesc>,
     pub microphone: Switch<AudioDesc>,
+    pub tracked_devices: Vec<TrackedDeviceDesc>,
     pub openvr: OpenvrDesc,
-    pub headsets: HeadsetsDesc,
 }
 
 pub fn load_settings(path: &str) -> StrResult<Settings> {
     const TRACE_CONTEXT: &str = "Settings";
     trace_err!(json::from_str(&trace_err!(fs::read_to_string(path))?))
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ClientHandshakePacket {
+    pub bridgevr_name: String,
+    pub version: Version,
+    pub native_eye_resolution: (u32, u32),
+    pub fov: [Fov; 2],
+    pub fps: u32,
+    pub max_video_encoder_instances: u8,
+    pub available_audio_player_sample_rates: Vec<u32>,
+    pub preferred_audio_player_sample_rates: u32,
+    pub available_microphone_sample_rates: Vec<u32>,
+    pub preferred_microphone_sample_rates: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub version: Version,
+    pub target_eye_resolution: (u32, u32),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ServerHandshakePacket {
+    pub config: ServerConfig,
+    pub settings: Settings,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HapticData {
+    pub device_type: TrackedDeviceType,
+    pub duration_seconds: f32,
+    pub frequency: f32,
+    pub amplitude: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct VideoPacket<'a> {
+    pub nal_index: u64,
+    pub sub_nal_index: u8,
+    pub sub_nal_count: u8,
+    pub hmd_pose: Pose,
+    pub sub_nal: &'a [u8],
+}
+
+// Since BridgeVR does not attempt at any clock synchronization, sending a timestamp is useless
+#[derive(Serialize, Deserialize)]
+pub struct AudioPacket<'a> {
+    // unfortunately serde does not support slice formats other than u8
+    pub samples: &'a [u8],
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MotionData {
+    pub time_ns: u64,
+    pub motion_descs: Vec<(TrackedDeviceType, MotionDesc)>,
 }
 
 bitflags! {
@@ -292,8 +351,8 @@ bitflags! {
         const DPAD_RIGHT = 0x00_20;
         const DPAD_UP = 0x00_40;
         const DPAD_DOWN = 0x00_80;
-        const JOYSTICK_LEFT_PRESS = 0x01_00;
-        const JOYSTICK_RIGHT_PRESS = 0x02_00;
+        const JOYSTICK_LEFT_CLICK = 0x01_00;
+        const JOYSTICK_RIGHT_CLICK = 0x02_00;
         const SHOULDER_LEFT = 0x04_00;
         const SHOULDER_RIGHT = 0x08_00;
         const MENU = 0x10_00;
@@ -305,17 +364,17 @@ bitflags! {
 bitflags! {
     #[derive(Serialize, Deserialize)]
     pub struct OculusTouchDigitalInput: u32 {
-        const A_PRESS = 0x00_00_00_01;
+        const A_CLICK = 0x00_00_00_01;
         const A_TOUCH = 0x00_00_00_02;
-        const B_PRESS = 0x00_00_00_04;
+        const B_CLICK = 0x00_00_00_04;
         const B_TOUCH = 0x00_00_00_08;
-        const X_PRESS = 0x00_00_00_10;
+        const X_CLICK = 0x00_00_00_10;
         const X_TOUCH = 0x00_00_00_20;
-        const Y_PRESS = 0x00_00_00_40;
+        const Y_CLICK = 0x00_00_00_40;
         const Y_TOUCH = 0x00_00_00_80;
-        const THUMBSTICK_LEFT_PRESS = 0x00_00_01_00;
+        const THUMBSTICK_LEFT_CLICK = 0x00_00_01_00;
         const THUMBSTICK_LEFT_TOUCH = 0x00_00_02_00;
-        const THUMBSTICK_RIGHT_PRESS = 0x00_00_04_00;
+        const THUMBSTICK_RIGHT_CLICK = 0x00_00_04_00;
         const THUMBSTICK_RIGHT_TOUCH = 0x00_00_08_00;
         const TRIGGER_LEFT_TOUCH = 0x00_00_10_00;
         const TRIGGER_RIGHT_TOUCH = 0x00_00_20_00;
@@ -329,7 +388,7 @@ bitflags! {
 bitflags! {
     #[derive(Serialize, Deserialize)]
     pub struct OculusGoDigitalInput: u8 {
-        const TOUCHPAD_PRESS = 0x01;
+        const TOUCHPAD_CLICK = 0x01;
         const TOUCHPAD_TOUCH = 0x02;
         const BACK = 0x04;
         const HOME = 0x08;
@@ -365,64 +424,6 @@ pub enum InputDeviceData {
         digital_input: OculusGoDigitalInput,
     },
     OculusHands([Vec<MotionDesc>; 2]),
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ClientHandshakePacket {
-    pub bridgevr_name: String,
-    pub version: Version,
-    pub native_eye_resolution: (u32, u32),
-    pub fov: [Fov; 2],
-    pub fps: u32,
-    pub max_video_encoder_instances: u8,
-    pub available_audio_player_sample_rates: Vec<u32>,
-    pub preferred_audio_player_sample_rates: u32,
-    pub available_microphone_sample_rates: Vec<u32>,
-    pub preferred_microphone_sample_rates: Vec<u32>,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ServerConfig {
-    pub version: Version,
-    pub target_eye_resolution: (u32, u32),
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct ServerHandshakePacket {
-    pub config: ServerConfig,
-    pub settings: Settings,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct HapticData {
-    pub hand: u8,
-    pub duration_seconds: f32,
-    pub frequency: f32,
-    pub amplitude: f32,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct VideoPacket<'a> {
-    pub slice_index: u8,
-    pub nal_index: u64,
-    pub sub_nal_index: u8,
-    pub sub_nal_count: u8,
-    pub hmd_pose: Pose,
-    pub sub_nal: &'a [u8],
-}
-
-// Since BridgeVR does not attempt at any clock synchronization, sending a timestamp is useless
-#[derive(Serialize, Deserialize)]
-pub struct AudioPacket<'a> {
-    // unfortunately serde does not support slice formats other than u8
-    pub samples: &'a [u8],
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct MotionData {
-    pub time_ns: u64,
-    pub hmd: MotionDesc,
-    pub controllers: [MotionDesc; 2],
 }
 
 #[derive(Serialize, Deserialize)]

@@ -45,67 +45,67 @@ pub fn input_device_data_to_str_value(
                 InputValue::NormalizedOneSided(*trigger_right),
             ),
             (
-                "/gamepad/a/press",
+                "/gamepad/a/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::A)),
             ),
             (
-                "/gamepad/b/press",
+                "/gamepad/b/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::B)),
             ),
             (
-                "/gamepad/x/press",
+                "/gamepad/x/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::X)),
             ),
             (
-                "/gamepad/y/press",
+                "/gamepad/y/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::Y)),
             ),
             (
-                "/gamepad/dpad/left/press",
+                "/gamepad/dpad/left/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::DPAD_LEFT)),
             ),
             (
-                "/gamepad/dpad/right/press",
+                "/gamepad/dpad/right/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::DPAD_RIGHT)),
             ),
             (
-                "/gamepad/dpad/up/press",
+                "/gamepad/dpad/up/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::DPAD_UP)),
             ),
             (
-                "/gamepad/dpad/down/press",
+                "/gamepad/dpad/down/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::DPAD_DOWN)),
             ),
             (
-                "/gamepad/left/joystick/press",
+                "/gamepad/left/joystick/click",
                 InputValue::Boolean(
-                    digital_input.contains(GamepadDigitalInput::JOYSTICK_LEFT_PRESS),
+                    digital_input.contains(GamepadDigitalInput::JOYSTICK_LEFT_CLICK),
                 ),
             ),
             (
-                "/gamepad/right/joystick/press",
+                "/gamepad/right/joystick/click",
                 InputValue::Boolean(
-                    digital_input.contains(GamepadDigitalInput::JOYSTICK_RIGHT_PRESS),
+                    digital_input.contains(GamepadDigitalInput::JOYSTICK_RIGHT_CLICK),
                 ),
             ),
             (
-                "/gamepad/left/shoulder/press",
+                "/gamepad/left/shoulder/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::SHOULDER_LEFT)),
             ),
             (
-                "/gamepad/right/shoulder/press",
+                "/gamepad/right/shoulder/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::SHOULDER_RIGHT)),
             ),
             (
-                "/gamepad/menu/press",
+                "/gamepad/menu/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::MENU)),
             ),
             (
-                "/gamepad/view/press",
+                "/gamepad/view/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::VIEW)),
             ),
             (
-                "/gamepad/home/press",
+                "/gamepad/home/click",
                 InputValue::Boolean(digital_input.contains(GamepadDigitalInput::HOME)),
             ),
         ],
@@ -153,41 +153,41 @@ pub fn input_device_data_to_str_value(
                 InputValue::NormalizedOneSided(*grip_right),
             ),
             (
-                "/oculus_touch/a/press",
-                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::A_PRESS)),
+                "/oculus_touch/a/click",
+                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::A_CLICK)),
             ),
             (
                 "/oculus_touch/a/touch",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::A_TOUCH)),
             ),
             (
-                "/oculus_touch/b/press",
-                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::B_PRESS)),
+                "/oculus_touch/b/click",
+                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::B_CLICK)),
             ),
             (
                 "/oculus_touch/b/touch",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::B_TOUCH)),
             ),
             (
-                "/oculus_touch/x/press",
-                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::X_PRESS)),
+                "/oculus_touch/x/click",
+                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::X_CLICK)),
             ),
             (
                 "/oculus_touch/x/touch",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::X_TOUCH)),
             ),
             (
-                "/oculus_touch/y/press",
-                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::Y_PRESS)),
+                "/oculus_touch/y/click",
+                InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::Y_CLICK)),
             ),
             (
                 "/oculus_touch/y/touch",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::Y_TOUCH)),
             ),
             (
-                "/oculus_touch/left/joystick/press",
+                "/oculus_touch/left/joystick/click",
                 InputValue::Boolean(
-                    digital_input.contains(OculusTouchDigitalInput::THUMBSTICK_LEFT_PRESS),
+                    digital_input.contains(OculusTouchDigitalInput::THUMBSTICK_LEFT_CLICK),
                 ),
             ),
             (
@@ -197,9 +197,9 @@ pub fn input_device_data_to_str_value(
                 ),
             ),
             (
-                "/oculus_touch/right/joystick/press",
+                "/oculus_touch/right/joystick/click",
                 InputValue::Boolean(
-                    digital_input.contains(OculusTouchDigitalInput::THUMBSTICK_RIGHT_PRESS),
+                    digital_input.contains(OculusTouchDigitalInput::THUMBSTICK_RIGHT_CLICK),
                 ),
             ),
             (
@@ -233,11 +233,11 @@ pub fn input_device_data_to_str_value(
                 ),
             ),
             (
-                "/oculus_touch/menu/press",
+                "/oculus_touch/menu/click",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::MENU)),
             ),
             (
-                "/oculus_touch/home/press",
+                "/oculus_touch/home/click",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::HOME)),
             ),
         ],
@@ -260,19 +260,19 @@ pub fn input_device_data_to_str_value(
                 InputValue::NormalizedTwoSided(*touchpad_vertical),
             ),
             (
-                "/oculus_go/touchpad/press",
-                InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::TOUCHPAD_PRESS)),
+                "/oculus_go/touchpad/click",
+                InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::TOUCHPAD_CLICK)),
             ),
             (
                 "/oculus_go/touchpad/touch",
                 InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::TOUCHPAD_TOUCH)),
             ),
             (
-                "/oculus_go/back/press",
+                "/oculus_go/back/click",
                 InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::BACK)),
             ),
             (
-                "/oculus_go/home/press",
+                "/oculus_go/home/click",
                 InputValue::Boolean(digital_input.contains(OculusGoDigitalInput::HOME)),
             ),
         ],

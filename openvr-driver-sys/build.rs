@@ -62,4 +62,42 @@ fn main() {
         .expect("bindings")
         .write_to_file(out_path.join("bindings.rs"))
         .expect("bindings.rs");
+
+    let openvr_driver_header_path_str = std::path::Path::new("include/openvr_driver.h");
+    let openvr_driver_header_string =
+        std::fs::read_to_string(openvr_driver_header_path_str).expect("openvr header not found");
+
+    let property_finder = regex::Regex::new(
+        r"\tProp_([A-Za-z\d_]*)_(?:Bool|Int32|Uint64|Float|String|Vector3)[ \t]*= (\d*),",
+    )
+    .unwrap();
+
+    // let property_finder = regex::Regex::new(r#"^"#).unwrap();
+
+    let mut mappings_fn_string: String = String::from(
+        r"
+        pub fn tracked_device_property_name_to_u32(prop_name: &str) -> Result<u32, String> {
+            match prop_name {
+        ",
+    );
+
+    for entry in property_finder.captures_iter(&openvr_driver_header_string) {
+        mappings_fn_string.push_str(&format!(
+            r#"
+                "{}" => Ok({}),
+            "#,
+            &entry[1], &entry[2]
+        ));
+    }
+
+    mappings_fn_string.push_str(
+        r#"
+                _ => Err(format!("{} property not found or not supported", prop_name)),
+            }
+        }
+        "#,
+    );
+
+    std::fs::write(out_path.join("properties_mappings.rs"), mappings_fn_string)
+        .expect("Cannot write properties_mappings.rs");
 }

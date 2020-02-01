@@ -1,78 +1,57 @@
 # BridgeVR
 
-todo: discord + paypal badge  
-todo: add tags: VR, SteamVR, OpenVR, OpenXR, Linux, cross-platform
+todo: add tags: VR, SteamVR, OpenVR, Linux, cross-platform, tracker
 
-Play SteamVR games wirelessly on Oculus Quest and other VR headsets. Requires an high end PC (64 bit OS) and 5Ghz Wi-Fi network.
+Emulate Vive trackers using only your smartphone(s).
 
-For now, this software requires you to tinker with low level settings. If you want a similar but easier tool, you can look at [ALVR](https://github.com/JackD83/ALVR) (Windows only).
+BridgeVR does not require ARCore, ARKit, or any camera capabilities. It uses deep learning to estimate the 6DOF pose of your devices using only the accelerometer, gyroscope and magnetometer.
 
 ## Supported platforms
 
-More information on the related [wiki page](todo link)
+|      Server OS      | Support |
+| :-----------------: | :-----: |
+|       Windows       |   ✔️    |
+|    Ubuntu 19.10     |   ✔️    |
+| Other Linux distros |    ?    |
+|        macOS        |    ❗    |
 
-|         Operative system         | Server support |
-| :------------------------------: | :------------: |
-|     Windows 10 (Nvidia GPU)      |       ✔️       |
-|       Windows 10 (AMD GPU)       |       ?        |
-|            Windows 7             |       ?        |
-|    Ubuntu 19.10 (Nvidia GPU)     |       ✔️       |
-| Other Linux distros (Nvidia GPU) |       ?        |
-|         Linux (AMD GPU)          |     ❌ [1]      |
-|              macOS               |      ❗/❌       |
+| Client OS | Support |
+| :-------: | :-----: |
+|  Android  |   ✔️    |
+|    iOS    |    ❗    |
+|  Windows  |    ❗    |
 
-|            VR headset             | Client support |
-| :-------------------------------: | :------------: |
-|           Oculus Quest            |       ✔️       |
-|             Oculus Go             |     ? [2]      |
-|              GearVR               |       ❌        |
-|  Windows Mixed Reality headsets   |   ? [3] [4]    |
-|  Oculus wired headsets (Windows)  |       ❗        |
-| HTC Vive and other wired headsets |       ❌        |
+| VR headset or streamer | Support |
+| :--------------------: | :-----: |
+|      Oculus Link       |    ?    |
+|          ALVR          | ✔️ [1]  |
+|    Virtual Desktop     |    ?    |
+|        HTC Vive        |    ?    |
+|      Oculus Rift       |    ?    |
+|      WMR headsets      |  ? [2]  |
 
 ✔️: Supported (for some combination of OS/hardware)  
 ?: Unknown support status (requires testing)  
 ❗: Could be supported with relatively little work  
-❌: Could be supported with major developement work  
-[1]: Waiting on support by dependency (FFmpeg). [Article link](https://www.phoronix.com/scan.php?page=news_item&px=FFmpeg-AMD-AMF-Vulkan)  
-[2]: Tested on Oculus Quest  
-[3]: Tested on the simulator  
-[4]: Client to connect to a remote server or for a backpack PC solution
-
-## Features
-
-* Linux support
-* Automatic video stream latency and judder minimization
-* Sliced encoding
-* Fixed foveated rendering
-
-## Upcoming features
-
-* Automatic SteamVR Chaperone setup
-* Gamma correction
-* Presets, differential settings saving/loading
-* Lints on unsupported or non reccomended settings
-
-Any help on supporting new features or platforms is gratly appreciated!
+[1]: Tested with Oculus Quest  
+[2]: Tested with the simulator
 
 ## Installation
 
-Please check out the [wiki](todo link). It contains also guides for building from source and explanation on how BridgeVR works internally.
+Please check out the [wiki](todo link).
 
-## Troubleshoot
+## Upcoming features
 
-If you have any problems or questions, please join us on our [Discord server](todo link)
+* Fully fledged VR streamer
 
 ## License
 
-[MIT](todo link)
+[This codebase and RoNIN model licences](LICENCE).
 
 ## Support the developement
 
-[PayPal](todo link)
+[PayPal](todo link).
 
 ## Credits
 
 Code by Riccardo Zaglia @zarik5
-
-A big thanks to @polygraphene, @JackD83 and all contributors of ALVR for the research on optimizing the performance on Oculus Quest.  

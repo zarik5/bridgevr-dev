@@ -51,7 +51,7 @@ fn begin_server_loop(
             let settings = if let Ok(settings) = get_settings() {
                 settings
             } else {
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(TIMEOUT);
                 get_settings()?
             };
 
