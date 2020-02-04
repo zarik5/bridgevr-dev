@@ -43,7 +43,7 @@ impl VrClient {
         todo!();
     }
 
-    pub fn poll_input(&self) -> ClientInputs {
+    pub fn poll_input(&self) {
         todo!()
     }
 }

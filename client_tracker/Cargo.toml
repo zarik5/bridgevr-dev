@@ -1,0 +1,90 @@
+[package]
+name = 'bridgevr_client_tracker'
+version = '0.0.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+
+[package.metadata.android]
+label = 'BridgeVR tracker'
+package_name = 'bvr.bridgevr.client_tracker'
+version_name = '0.0.1'
+version_code = 1
+android_version = 29
+target_sdk_version = 29
+min_sdk_version = 25
+build_targets = ['aarch64-linux-android', 'arm-linux-androideabi']
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.bluetooth'
+# required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.sersor.accelerometer'
+required = true
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.sersor.barometer'
+# required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.sersor.compass'
+required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.sersor.gyroscope'
+required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.sersor.hifi_sensors'
+required = true
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.usb.host'
+# required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.wifi'
+required = true
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.wifi.direct'
+# required = false
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.ACCESS_NETWORK_STATE'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.ACCESS_WIFI_STATE'
+
+[[package.metadata.android.permission]]
+name = 'android.permission.BATTERY_STATS'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.BLUETOOTH'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.CHANGE_NETWORK_STATE'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.CHANGE_WIFI_STATE'
+
+[[package.metadata.android.permission]]
+name = 'android.permission.INTERNET'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.VIBRATE'
+
+[dependencies]
+chrono = '0.4.10'
+log = '0.4.8'
+fern = '0.5.9'
+parking_lot = '0.10.0'
+bridgevr_common = { path = '../common' }
+
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_glue = { git = 'https://github.com/rust-windowing/android-rs-glue' }
+android_logger = '0.8.6'
+android-ndk = { git = 'https://github.com/rust-windowing/android-ndk-rs' }
+jni-glue = '0.0.10'

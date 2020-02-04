@@ -25,6 +25,7 @@ cpal = '0.11.0' # Audio
 laminar = '0.3.2' # Network protocol
 crossbeam-channel = "0.3" # upgrade blocked by laminar leak
 
+
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # WARNING: any version change can create undefined behaviour
 gfx-backend-vulkan = { version = '0.4.1' }

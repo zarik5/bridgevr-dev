@@ -15,43 +15,29 @@ BridgeVR does not require ARCore, ARKit, or any camera capabilities. It uses dee
 | Other Linux distros |    ?    |
 |        macOS        |    ❗    |
 
-| Client OS | Support |
-| :-------: | :-----: |
-|  Android  |   ✔️    |
-|    iOS    |    ❗    |
-|  Windows  |    ❗    |
-
-| VR headset or streamer | Support |
+| Headset or VR streamer | Support |
 | :--------------------: | :-----: |
-|      Oculus Link       |    ?    |
-|          ALVR          | ✔️ [1]  |
+|          ALVR          |   ✔️    |
 |    Virtual Desktop     |    ?    |
 |        HTC Vive        |    ?    |
 |      Oculus Rift       |    ?    |
-|      WMR headsets      |  ? [2]  |
 
-✔️: Supported (for some combination of OS/hardware)  
+✔️: Supported  
 ?: Unknown support status (requires testing)  
 ❗: Could be supported with relatively little work  
-[1]: Tested with Oculus Quest  
-[2]: Tested with the simulator
 
 ## Installation
 
 Please check out the [wiki](todo link).
 
-## Upcoming features
+## Upcoming features - Help wanted!
 
-* Fully fledged VR streamer
+I plan to turn this project into a fully fledged VR streamer (such as ALVR or Virtual Desktop) with cross platform support and some innovative features. If you're into UI developement or Rust programming and want to help me you can join me on my [Discord server](todo link).
 
 ## License
 
 [This codebase and RoNIN model licences](LICENCE).
 
-## Support the developement
-
-[PayPal](todo link).
-
 ## Credits
 
-Code by Riccardo Zaglia @zarik5
+Code by Riccardo Zaglia (@zarik5)
