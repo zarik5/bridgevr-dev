@@ -2,6 +2,7 @@
 members = [
     'xtask',
     'openvr-driver-sys',
+    'ovr-mobile-sdk-sys',
     'common',
     'server_bootstrap',
     'server_driver',

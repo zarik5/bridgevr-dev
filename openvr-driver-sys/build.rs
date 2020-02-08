@@ -1,6 +1,6 @@
 fn main() {
     let out_path = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let include_flag_string = format!("-I{}", out_path.to_string_lossy());
+    let out_dir_include_flag_string = format!("-I{}", out_path.to_string_lossy());
 
     let mut build = cc::Build::new();
     let mut build = build
@@ -8,7 +8,7 @@ fn main() {
         .file("src/bindings.cpp")
         .flag("-Isrc")
         .flag("-Iinclude")
-        .flag(&include_flag_string);
+        .flag(&out_dir_include_flag_string);
     if !cfg!(windows) {
         build = build.flag("-Wno-unused-parameter");
     }
@@ -19,7 +19,7 @@ fn main() {
         .header("src/openvr_driver_capi.h")
         .clang_arg("-Isrc")
         .clang_arg("-Iinclude")
-        .clang_arg(&include_flag_string)
+        .clang_arg(&out_dir_include_flag_string)
         .layout_tests(false)
         .enable_cxx_namespaces()
         .default_enum_style(bindgen::EnumVariation::Consts)
@@ -68,11 +68,9 @@ fn main() {
         std::fs::read_to_string(openvr_driver_header_path_str).expect("openvr header not found");
 
     let property_finder = regex::Regex::new(
-        r"\tProp_([A-Za-z\d_]*)_(?:Bool|Int32|Uint64|Float|String|Vector3)[ \t]*= (\d*),",
+        r"\t(Prop_[A-Za-z\d_]*_(?:Bool|Int32|Uint64|Float|String|Vector3))[ \t]*= (\d*),",
     )
     .unwrap();
-
-    // let property_finder = regex::Regex::new(r#"^"#).unwrap();
 
     let mut mappings_fn_string: String = String::from(
         r"
