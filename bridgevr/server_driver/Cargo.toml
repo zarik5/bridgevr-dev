@@ -1,0 +1,31 @@
+[package]
+name = 'bridgevr_server_driver'
+version = '0.0.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+build = 'build.rs'
+
+[lib]
+crate-type = ['cdylib']
+
+[dependencies]
+chrono = '0.4.10'
+log = '0.4.8'
+fern = '0.5.9'
+bincode = '1.2.1'
+lazy_static = '1.4.0'
+nalgebra = "0.20.0"
+parking_lot = "0.10.0"
+paste = "0.1.7"
+bridgevr_common = { path = '../common' }
+openvr-driver-sys = { path = '../openvr-driver-sys' }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = '0.8.1'
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+msgbox = '0.4.0'
+
+[build-dependencies]
+dirs = '2.0.2'

@@ -1,0 +1,105 @@
+[package]
+name = 'bridgevr_client_hmd'
+version = '0.0.1'
+authors = ['Riccardo Zaglia <github.com/zarik5>']
+license = 'MIT'
+edition = '2018'
+build = 'build.rs'
+
+[package.metadata.android]
+label = 'BridgeVR'
+package_name = 'bvr.bridgevr.client_hmd'
+version_name = '0.0.1'
+version_code = 1
+android_version = 29
+target_sdk_version = 29
+min_sdk_version = 25
+build_targets = ['aarch64-linux-android']
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.bluetooth'
+# required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.microphone'
+required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.sersor.gamepad'
+required = false
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.usb.host'
+# required = false
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.vr.headtracking'
+version = '1'
+required = false
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.vulkan.compute'
+# version = '0'
+# required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.vulkan.level'
+version = '0'
+required = true
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.vulkan.version'
+# version = '0x400003'
+# required = true
+
+[[package.metadata.android.feature]]
+name = 'android.hardware.wifi'
+required = true
+
+# [[package.metadata.android.feature]]
+# name = 'android.hardware.wifi.direct'
+# required = true
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.ACCESS_NETWORK_STATE'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.ACCESS_WIFI_STATE'
+
+[[package.metadata.android.permission]]
+name = 'android.permission.BATTERY_STATS'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.BLUETOOTH'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.BLUETOOTH_ADMIN'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.BLUETOOTH_PRIVILEGED'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.CHANGE_NETWORK_STATE'
+
+# [[package.metadata.android.permission]]
+# name = 'android.permission.CHANGE_WIFI_STATE'
+
+[[package.metadata.android.permission]]
+name = 'android.permission.INTERNET'
+
+[[package.metadata.android.permission]]
+name = 'android.permission.RECORD_AUDIO'
+
+[dependencies]
+ash = '0.29.0'
+bridgevr_common = { path = '../common' }
+chrono = '0.4.11'
+fern = '0.5.9'
+log = '0.4.8'
+parking_lot = '0.10.0'
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_glue = { git = 'https://github.com/rust-windowing/android-rs-glue' }
+android-ndk-sys = { git = 'https://github.com/rust-windowing/android-ndk-rs' }
+oboe = '0.1.0'
+ovr-mobile-sdk-sys = { path = '../ovr-mobile-sdk-sys', default-features = false, features = ['custom-version'] }
