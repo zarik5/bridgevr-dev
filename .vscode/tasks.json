@@ -4,20 +4,10 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "build bridgevr_client apk docker",
-            "command": "docker",
-            "args": [
-                "run",
-                "--rm",
-                "-v",
-                "${workspaceFolder}/bridgevr_client:/root/src",
-                "philipalldredge/cargo-apk",
-                "cargo apk build"
-            ],
-        },
-        {
-            "label": "clippy all",
-            "command": "cargo clippy -- -W clippy-pedantic",
+            "label": "build_playground",
+            "type": "shell",
+            "command": "cd bridgevr; cargo build",
+            "problemMatcher": []
         }
     ]
 }

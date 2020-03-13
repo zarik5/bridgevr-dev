@@ -94,7 +94,7 @@ name = 'android.permission.RECORD_AUDIO'
 ash = '0.29.0'
 bridgevr_common = { path = '../common' }
 chrono = '0.4.11'
-fern = '0.5.9'
+fern = '0.6.0'
 log = '0.4.8'
 parking_lot = '0.10.0'
 

@@ -10,9 +10,9 @@ build = 'build.rs'
 crate-type = ['cdylib']
 
 [dependencies]
-chrono = '0.4.10'
+chrono = '0.4.11'
 log = '0.4.8'
-fern = '0.5.9'
+fern = '0.6.0'
 bincode = '1.2.1'
 lazy_static = '1.4.0'
 nalgebra = "0.20.0"

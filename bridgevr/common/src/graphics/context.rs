@@ -13,7 +13,7 @@ use gfx_backend_dx11 as back;
 #[cfg(target_os = "macos")]
 use gfx_backend_metal as back;
 
-pub(super) const TRACE_CONTEXT: &str = "Rendering Utils";
+pub(super) const TRACE_CONTEXT: &str = "Graphics";
 
 type InstanceImpl = <back::Backend as gfx_hal::Backend>::Instance;
 type PhysicalDeviceImpl = <back::Backend as gfx_hal::Backend>::PhysicalDevice;

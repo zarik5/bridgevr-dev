@@ -76,9 +76,9 @@ name = 'android.permission.INTERNET'
 # name = 'android.permission.VIBRATE'
 
 [dependencies]
-chrono = '0.4.10'
+chrono = '0.4.11'
 log = '0.4.8'
-fern = '0.5.9'
+fern = '0.6.0'
 parking_lot = '0.10.0'
 bridgevr_common = { path = '../common' }
 
