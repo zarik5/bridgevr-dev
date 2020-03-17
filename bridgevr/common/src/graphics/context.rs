@@ -70,7 +70,7 @@ pub struct GraphicsContext {
 
 impl GraphicsContext {
     pub fn new(adapter_index: Option<usize>) -> StrResult<Self> {
-        let instance = trace_err!(back::Instance::create(BVR_NAME, 1))?;
+        let instance = trace_err_dbg!(back::Instance::create(BVR_NAME, 1))?;
 
         let mut adapters = instance.enumerate_adapters();
         let adapter_index = adapter_index.unwrap_or(0);

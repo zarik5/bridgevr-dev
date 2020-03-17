@@ -304,7 +304,7 @@ impl Compositor {
 
                 layers_buffers_history
                     .push((current_layers_textures, (operation_buffer, uniform_buffers)));
-                // unwrap is safe because I just added an element.
+                // unwrap never fails because I just added an element.
                 let (_, bufs) = layers_buffers_history.last().unwrap();
                 bufs
             };

@@ -1,51 +1,52 @@
 use ash::version::InstanceV1_0;
 use ash::{
-    extensions::{ext::DebugUtils, *},
+    extensions::*,
     version::{DeviceV1_0, EntryV1_0},
     *,
 };
 use bridgevr_common::{constants::*, *};
-use parking_lot::Mutex;
-use std::collections::HashSet;
-use std::ffi::{CStr, CString};
+use std::ffi::{c_void, CStr, CString};
 
 pub(super) const TRACE_CONTEXT: &str = "Graphics";
 
-fn required_instance_extension_names() -> Vec<CString> {
-    let mut extensions = vec![
-        khr::Surface::name().to_owned(),
-        khr::XlibSurface::name().to_owned(),
-    ];
-    if cfg!(debug_assertions) {
-        extensions.push(DebugUtils::name().to_owned())
-    }
-    extensions
-}
+const VALIDATION_LAYER: &str = "VK_LAYER_LUNARG_standard_validation";
 
-fn required_device_extension_names() -> Vec<CString> {
-    vec![khr::Swapchain::name().to_owned()]
+unsafe extern "system" fn debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_types: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _: *mut c_void,
+) -> vk::Bool32 {
+    let message = CStr::from_ptr((*p_callback_data).p_message);
+    println!(
+        "Vulkan: [{:?}] [{:?}] {:?}",
+        message_severity, message_types, message
+    );
+    vk::FALSE
 }
 
 pub struct GraphicsContext {
-    pub(super) entry: Entry, // this must outlive `instance`
+    _entry: Entry, // this must outlive `instance`
     pub(super) instance: Instance,
-    pub(super) surface_loader: khr::Surface,
+    debug_utils_loader: ext::DebugUtils,
+    debug_messenger: vk::DebugUtilsMessengerEXT,
     pub(super) physical_device: vk::PhysicalDevice,
+    pub(super) memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub(super) device: Device,
+    pub(super) queue_family_index: u32,
     pub(super) queue: vk::Queue,
 }
 
 impl GraphicsContext {
     pub fn new(
         adapter_index: Option<usize>,
-        instance_extensions_names: Option<&[&str]>,
-        device_extensions_names: Option<&[&str]>,
+        instance_extensions_names: &[&str],
+        device_extensions_names: &[&str],
     ) -> StrResult<Self> {
-        let entry = trace_err!(Entry::new())?; // todo store this?
+        let entry = trace_err!(Entry::new())?;
 
-        // dbg!(entry.enumerate_instance_layer_properties().unwrap());
-
-        let bridgevr_c_string = trace_err!(CString::new(BVR_NAME))?;
+        // unwrap never fails
+        let bridgevr_c_string = CString::new(BVR_NAME).unwrap();
         let application_info = vk::ApplicationInfo::builder()
             .application_name(bridgevr_c_string.as_c_str()) // todo: remove?
             .application_version(vk_make_version!(1, 0, 0)) // todo: remove?
@@ -53,19 +54,18 @@ impl GraphicsContext {
             .engine_version(vk_make_version!(1, 0, 0)) // todo: remove?
             .api_version(vk_make_version!(1, 0, 0));
 
-        let validation_layer_c_string =
-            trace_err!(CString::new("VK_LAYER_LUNARG_standard_validation"))?;
+        // unwrap never fails
+        let validation_layer_c_string = CString::new(VALIDATION_LAYER).unwrap();
         let enabled_layer_names = &[validation_layer_c_string.as_ptr()];
 
-        let instance_extension_c_strings = if let Some(names) = instance_extensions_names {
-            let mut name_c_strings = vec![];
-            for &name in names {
-                name_c_strings.push(trace_err!(CString::new(name))?);
-            }
-            name_c_strings
-        } else {
-            required_instance_extension_names()
-        };
+        let mut instance_extension_c_strings = vec![];
+        for &name in instance_extensions_names {
+            // unwrap never fails
+            instance_extension_c_strings.push(CString::new(name).unwrap());
+        }
+        if cfg!(debug_assertions) {
+            instance_extension_c_strings.push(ext::DebugUtils::name().to_owned());
+        }
         let enabled_extension_names = instance_extension_c_strings
             .iter()
             .map(|s| s.as_ptr())
@@ -79,22 +79,30 @@ impl GraphicsContext {
 
         let instance = trace_err!(unsafe { entry.create_instance(&instance_create_info, None) })?;
 
-        let surface_loader = khr::Surface::new(&entry, &instance);
+        let debug_utils_loader = ext::DebugUtils::new(&entry, &instance);
+        let debug_messenger = if cfg!(debug_assertions) {
+            let debug_messenger_create_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(
+                    vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::INFO
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE,
+                )
+                .message_type(
+                    vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE
+                        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION,
+                )
+                .pfn_user_callback(Some(debug_callback));
+
+            trace_err!(unsafe {
+                debug_utils_loader.create_debug_utils_messenger(&debug_messenger_create_info, None)
+            })?
+        } else {
+            vk::DebugUtilsMessengerEXT::null()
+        };
 
         let mut physical_devices = trace_err!(unsafe { instance.enumerate_physical_devices() })?;
-        let indexed_physical_device_names = physical_devices
-            .iter()
-            .map(|&physical_device| unsafe {
-                CStr::from_ptr(
-                    instance
-                        .get_physical_device_properties(physical_device)
-                        .device_name
-                        .as_ptr(),
-                )
-            })
-            .enumerate()
-            .collect::<Vec<_>>();
-        dbg!(indexed_physical_device_names);
 
         let adapter_index = adapter_index.unwrap_or(0);
         let physical_device = if physical_devices.len() > adapter_index {
@@ -103,30 +111,29 @@ impl GraphicsContext {
             return trace_str!("adapter_index out of bounds");
         };
 
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
         let queue_families =
             unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
-        let queue_family_index = trace_none!(queue_families.iter().position(|qf| {
-            qf.queue_flags.contains(vk::QueueFlags::GRAPHICS) // todo: remove graphics
-                && qf.queue_flags.contains(vk::QueueFlags::COMPUTE)
-        }))?;
+        let queue_family_index = trace_none!(queue_families
+            .iter()
+            .position(|qf| { qf.queue_flags.contains(vk::QueueFlags::COMPUTE) }))?
+            as _;
 
-        let logical_device_extension_c_strings = if let Some(names) = device_extensions_names {
-            let mut name_c_strings = vec![];
-            for &name in names {
-                name_c_strings.push(trace_err!(CString::new(name))?);
-            }
-            name_c_strings
-        } else {
-            required_device_extension_names()
-        };
+        let mut logical_device_extension_c_strings = vec![];
+        for &name in device_extensions_names {
+            // unwrap never fails
+            logical_device_extension_c_strings.push(CString::new(name).unwrap());
+        }
         let enabled_extension_names = logical_device_extension_c_strings
             .iter()
             .map(|s| s.as_ptr())
             .collect::<Vec<_>>();
 
-        let queue_priorities = [1.0_f32];
+        let queue_priorities = [1.0_f32]; // if multithreading, add queues here
         let queue_create_infos = &[vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(queue_family_index as _)
+            .queue_family_index(queue_family_index)
             .queue_priorities(&queue_priorities)
             .build()];
         let mut logical_device_creation_info = vk::DeviceCreateInfo::builder()
@@ -141,14 +148,17 @@ impl GraphicsContext {
             instance.create_device(physical_device, &logical_device_creation_info, None)
         })?;
 
-        let queue = unsafe { logical_device.get_device_queue(queue_family_index as _, 0) };
+        let queue = unsafe { logical_device.get_device_queue(queue_family_index, 0) };
 
         Ok(Self {
-            entry,
+            _entry: entry,
             instance,
-            surface_loader,
+            debug_utils_loader,
+            debug_messenger,
             physical_device,
+            memory_properties,
             device: logical_device,
+            queue_family_index,
             queue,
         })
     }
@@ -158,6 +168,9 @@ impl Drop for GraphicsContext {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_device(None);
+
+            self.debug_utils_loader
+                .destroy_debug_utils_messenger(self.debug_messenger, None);
             self.instance.destroy_instance(None);
         }
     }

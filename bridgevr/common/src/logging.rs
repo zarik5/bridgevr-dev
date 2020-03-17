@@ -44,6 +44,18 @@ macro_rules! trace_err {
         $res.map_err(|e| {
             format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!())
                 $(+ ", " + &format!($expect_fmt $(, $args)*))? +
+                &format!(":\n{}", e)
+        })
+    };
+}
+
+// trace_err variant for errors that do not implement fmt::Display
+#[macro_export]
+macro_rules! trace_err_dbg {
+    ($res:expr $(, $expect_fmt:expr $(, $args:expr)*)?) => {
+        $res.map_err(|e| {
+            format!("[{}] At {}:{}", TRACE_CONTEXT, file!(), line!())
+                $(+ ", " + &format!($expect_fmt $(, $args)*))? +
                 &format!(":\n{:?}", e)
         })
     };

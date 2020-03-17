@@ -3,13 +3,7 @@ mod settings;
 mod tracked_device;
 
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{
-    data::*,
-    input_mapping::*,
-    rendering::*,
-    sockets::*,
-    *,
-};
+use bridgevr_common::{data::*, input_mapping::*, rendering::*, sockets::*, *};
 use hmd::*;
 use log::*;
 use openvr_driver_sys as vr;
@@ -88,7 +82,7 @@ extern "C" fn init(
             _ => vr::TrackedDeviceClass_GenericTracker,
         };
 
-        // unwrap is safe
+        // unwrap never fails
         let controller_id_c_string = CString::new((*device_type as u8).to_string()).unwrap();
         unsafe {
             vr::vrServerDriverHostTrackedDeviceAdded(
@@ -437,19 +431,19 @@ impl VrServer {
         // the same openvr settings instance is shared between hmd, controllers and server.
         let new_settings = create_openvr_settings(Some(settings), session_desc);
         if should_restart(&*self.settings.lock(), &new_settings) {
+            // unwraps never fail
             unsafe {
-                let reason_c_string = trace_err!(CString::new(
-                    "Critical properties changed. Restarting SteamVR."
-                ))?;
-                let executable_c_string = trace_err!(CString::new(
+                let reason_c_string =
+                    CString::new("Critical properties changed. Restarting SteamVR.").unwrap();
+                let executable_c_string = CString::new(
                     "" // todo: steamvr_launcher,
-                ))?;
-                let arguments_c_string = trace_err!(CString::new(
+                ).unwrap();
+                let arguments_c_string = CString::new(
                     "" // steamvr_launcher_args,
-                ))?;
-                let working_directory_c_string = trace_err!(CString::new(
+                ).unwrap();
+                let working_directory_c_string = CString::new(
                     "" // todo: steamvr_launcher_directory,
-                ))?;
+                ).unwrap();
                 vr::vrServerDriverHostRequestRestart(
                     reason_c_string.as_ptr(),
                     executable_c_string.as_ptr(),

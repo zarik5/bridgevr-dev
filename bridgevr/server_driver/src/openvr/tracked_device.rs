@@ -56,6 +56,7 @@ pub extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitE
 
         let mut component_map_ref = context.input_to_component_map.lock();
         for (openvr_path, input_type, client_paths) in &tracked_device_desc.input_mapping {
+            // unwrap never fails
             let openvr_path_c_string = CString::new(openvr_path.clone()).unwrap();
             let mut component = vr::k_ulInvalidInputComponentHandle;
             let res = unsafe {
@@ -91,6 +92,7 @@ pub extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitE
             }
         }
 
+        // unwrap never fails
         let haptic_path_c_string = CString::new(HAPTIC_PATH).unwrap();
         let mut component = vr::k_ulInvalidInputComponentHandle;
         let res = unsafe {

@@ -98,6 +98,7 @@ pub fn set_custom_props(
                             vr::vrSetFloatProperty(container, code as _, *value)
                         }
                         OpenvrPropValue::String(value) => {
+                            // unwrap never fails
                             let c_string = CString::new(value.clone()).unwrap();
                             vr::vrSetStringProperty(container, code as _, c_string.as_ptr())
                         }
