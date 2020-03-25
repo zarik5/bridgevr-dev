@@ -16,9 +16,8 @@ Cons:
 
 * Unsafe graphics
 * need to mantain a modded version of gfx-hal with access to internals
-* lots of glue between modules (multiplied for each graphics api)
+* lots of glue between modules (multiplied for each graphics api and ffmpeg hwaccel device)
 * No ffmpeg hardware input support for combination linux-amd, need a separate implementation with AMF ffi
-* No ffmpeg hardware input support for mediacodec
 * ffmpeg hard to compile and distribute
 
 Modules needed:
@@ -26,14 +25,6 @@ Modules needed:
 * graphics
 * ffmepeg
 * amf encoder
-* mediacodec
-
-Glue:
-
-* instance and device creation from openvr handles
-* pass instance and device to openvr
-* image creation from openvr handle
-* pass image to openvr
 
 ## ash + native codec apis
 
@@ -44,8 +35,9 @@ Pros:
 
 Cons:
 
-* lots of glue for each encoder api, or complicated macros
-* Need 3 separate encoder implementations (nvenc, amf, videotoolbox)
+* Even more unsafe graphics
+* lots of input configuration glue for each encoder api, or complicated macros
+* Need 3 separate encoder implementations (nvenc, amf, videotoolbox) + medicodec decoder
 * More glue for d3d-vk, potentially expensive interop
 
 Modules needed:
@@ -63,7 +55,6 @@ Modules:
 * vulkan
 * ffmepeg
 * amf encoder
-* mediacodec
 
 ## gfx-hal + native codec apis
 
@@ -77,10 +68,9 @@ Modules:
 
 ## Developement plan
 
-* Start with ash, rendering pipelines, ubuntu only
+* Start with ash, compute pipelines, ubuntu only
 * Develop minimum app (ffmpeg nvenc only, mediacodec, ovr video, no audio, no ffr)
-* Add compute pipelines (no substitution)
 * Convert to gfx-hal
 * Add the rest for ubuntu (ffmpeg amf, ovr input, audio, ffr, latency minimization)
-* Pubblish
+* Publish
 * Add windows and macos support

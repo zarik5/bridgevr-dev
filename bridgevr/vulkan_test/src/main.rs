@@ -22,13 +22,13 @@ fn run() -> StrResult {
         BufferType::Storage,
     )?);
 
-    let shader = trace_err!(std::fs::read("bridgevr/playground/shader/comp.spv"))?;
+    let shader_bytecode = include_bytes!(concat!(env!("OUT_DIR"), "/shader.spv"));
 
     let operation_buffer = OperationBuffer::new(
         context,
         Operation::Render {
             layout: vec![vec![Binding::Buffer(buffer.clone())]],
-            shader,
+            shader: shader_bytecode.to_vec(),
             resolution: IMAGE_SIZE,
         },
     )?;

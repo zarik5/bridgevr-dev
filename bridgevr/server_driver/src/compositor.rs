@@ -5,7 +5,7 @@ use bridgevr_common::{
     data::*,
     ffr::*,
     frame_slices::*,
-    rendering::*,
+    graphics::*,
     thread_loop::{self, ThreadLoop},
     *,
 };

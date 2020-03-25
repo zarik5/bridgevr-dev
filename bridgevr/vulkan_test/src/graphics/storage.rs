@@ -1,56 +1,28 @@
 use super::context::*;
-use ash::{
-    version::{DeviceV1_0, InstanceV1_0},
-    *,
-};
+use ash::{version::DeviceV1_0, *};
 use bridgevr_common::*;
 use std::sync::Arc;
-
-#[derive(Clone, Copy)]
-pub enum BufferType {
-    UniformImmutable,
-    UniformMutable,
-    Storage,
-}
-
-fn get_buffer_usage_flags(buffer_type: BufferType) -> vk::BufferUsageFlags {
-    match buffer_type {
-        BufferType::UniformImmutable | BufferType::UniformMutable => {
-            vk::BufferUsageFlags::UNIFORM_BUFFER
-        }
-        BufferType::Storage => vk::BufferUsageFlags::STORAGE_BUFFER,
-    }
-}
-
-fn get_memory_property_flags(_: BufferType) -> vk::MemoryPropertyFlags {
-    vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE
-    // todo: distinguish cases
-}
 
 pub struct Buffer {
     graphics_context: Arc<GraphicsContext>,
     pub(super) size: u64,
-    pub(super) ty: BufferType,
     pub(super) handle: vk::Buffer,
     memory: vk::DeviceMemory,
 }
 
 impl Buffer {
-    pub fn new(
-        graphics_context: Arc<GraphicsContext>,
-        size: u64,
-        ty: BufferType,
-    ) -> StrResult<Self> {
+    pub fn new(graphics_context: Arc<GraphicsContext>, size: u64) -> StrResult<Self> {
         let dev = &graphics_context.device;
 
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(size)
-            .usage(get_buffer_usage_flags(ty))
+            .usage(vk::BufferUsageFlags::STORAGE_BUFFER)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
         let buffer = trace_err!(unsafe { dev.create_buffer(&buffer_create_info, None) })?;
 
         let memory_requirements = unsafe { dev.get_buffer_memory_requirements(buffer) };
-        let memory_property_flags = get_memory_property_flags(ty);
+        let memory_property_flags =
+            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE;
 
         let memory_type_index = trace_none!(graphics_context
             .memory_properties
@@ -73,7 +45,6 @@ impl Buffer {
         Ok(Self {
             graphics_context,
             size,
-            ty,
             handle: buffer,
             memory,
         })

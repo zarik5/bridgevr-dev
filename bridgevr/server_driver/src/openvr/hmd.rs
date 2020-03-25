@@ -1,6 +1,6 @@
 use super::tracked_device::*;
 use crate::compositor::*;
-use bridgevr_common::{data::*, rendering::*};
+use bridgevr_common::{data::*, graphics::*};
 use log::*;
 use openvr_driver_sys as vr;
 use parking_lot::Mutex;
@@ -216,8 +216,9 @@ extern "C" fn virtual_display_present(
     let maybe_texture = context.swap_texture_manager.lock().get(handle).or_else(|| {
         #[cfg(target_os = "linux")]
         let maybe_texture = {
-            let data =
-                &*((*present_info).backbufferTextureHandle as *mut vr::VRVulkanTextureData_t);
+            let data = unsafe {
+                &*((*present_info).backbufferTextureHandle as *mut vr::VRVulkanTextureData_t)
+            };
 
             let format = format_from_native(data.m_nFormat);
             Texture::from_shared_vulkan_ptrs(
@@ -387,7 +388,7 @@ extern "C" fn create_swap_texture_set(
 
             data.iter()
                 .map(|(handle, storage)| {
-                    let AuxiliaryTextureData(vulkan_data) = &mut *storage.lock();
+                    let vulkan_data = &mut *storage.lock();
 
                     vulkan_data.m_nImage = *handle;
                     vulkan_data.m_pInstance = instance_ptr as _;

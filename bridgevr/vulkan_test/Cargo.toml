@@ -1,9 +1,10 @@
 [package]
-name = 'playground'
+name = 'vulkan_test'
 version = '0.1.0'
 authors = ['Riccardo Zaglia <github.com/zarik5>']
 license = 'MIT'
 edition = '2018'
+build = 'build.rs'
 
 [dependencies]
 bridgevr_common = { path = '../common' }
@@ -12,3 +13,6 @@ ash = '0.29.0'
 parking_lot = '0.10.0'
 safe-transmute = '0.11.0-rc.2'
 png = '0.16.1'
+
+[build-dependencies]
+shaderc = '0.6.2'

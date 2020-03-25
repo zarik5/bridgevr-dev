@@ -3,7 +3,7 @@ mod settings;
 mod tracked_device;
 
 use crate::{compositor::*, shutdown_signal::ShutdownSignal};
-use bridgevr_common::{data::*, input_mapping::*, rendering::*, sockets::*, *};
+use bridgevr_common::{data::*, input_mapping::*, graphics::*, sockets::*, *};
 use hmd::*;
 use log::*;
 use openvr_driver_sys as vr;

@@ -6,7 +6,7 @@ mod shutdown_signal;
 mod statistics;
 mod video_encoder;
 
-use bridgevr_common::{audio::*, constants::*, data::*, rendering::*, sockets::*, *};
+use bridgevr_common::{audio::*, constants::*, data::*, graphics::*, sockets::*, *};
 use compositor::*;
 use lazy_static::lazy_static;
 use log::*;
@@ -342,41 +342,44 @@ pub unsafe extern "C" fn HmdDriverFactory(
     use openvr_driver_sys as vr;
     logging_backend::init_logging();
 
-    lazy_static! {
-        static ref MAYBE_EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
-    }
+    // lazy_static! {
+    //     static ref MAYBE_EMPTY_SYSTEM: StrResult<EmptySystem> = create_empty_system();
+    // }
 
-    let try_create_server = || -> StrResult<_> {
-        let sys = (*MAYBE_EMPTY_SYSTEM).as_ref()?;
-        begin_server_loop(
-            sys.graphics.clone(),
-            sys.vr_server.clone(),
-            sys.shutdown_signal_sender.lock().clone(),
-            // this unwrap is safe because `shutdown_signal_receiver_temp` has just been set
-            sys.shutdown_signal_receiver_temp.lock().take().unwrap(),
-            sys.session_desc_loader.clone(),
-        )?;
+    // let try_create_server = || -> StrResult<_> {
+    //     let sys = (*MAYBE_EMPTY_SYSTEM).as_ref()?;
+    //     begin_server_loop(
+    //         sys.graphics.clone(),
+    //         sys.vr_server.clone(),
+    //         sys.shutdown_signal_sender.lock().clone(),
+    //         // this unwrap is safe because `shutdown_signal_receiver_temp` has just been set
+    //         sys.shutdown_signal_receiver_temp.lock().take().unwrap(),
+    //         sys.session_desc_loader.clone(),
+    //     )?;
 
-        Ok(sys.vr_server.lock().server_ptr())
-    };
+    //     Ok(sys.vr_server.lock().server_ptr())
+    // };
 
-    match try_create_server() {
-        Ok(mut server_ptr) => {
-            if CStr::from_ptr(interface_name)
-                == CStr::from_bytes_with_nul_unchecked(vr::IServerTrackedDeviceProvider_Version)
-            {
-                server_ptr = null_mut();
-            }
+    // match try_create_server() {
+    //     Ok(mut server_ptr) => {
+    //         if CStr::from_ptr(interface_name)
+    //             == CStr::from_bytes_with_nul_unchecked(vr::IServerTrackedDeviceProvider_Version)
+    //         {
+    //             server_ptr = null_mut();
+    //         }
 
-            if server_ptr.is_null() && !return_code_ptr.is_null() {
-                *return_code_ptr = vr::VRInitError_Init_InterfaceNotFound as _;
-            }
+    //         if server_ptr.is_null() && !return_code_ptr.is_null() {
+    //             *return_code_ptr = vr::VRInitError_Init_InterfaceNotFound as _;
+    //         }
 
-            server_ptr as _
-        }
-        Err(e) => {
-            show_err_str!("{}", e);
-            null_mut()
-        }
-    }
+    //         server_ptr as _
+    //     }
+    //     Err(e) => {
+    //         show_err_str!("{}", e);
+    //         null_mut()
+    //     }
+    // }
+
+    show_err_str!("Hello from steamvr");
+    null_mut()
 }

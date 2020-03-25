@@ -15,8 +15,8 @@ log = '0.4.8'
 fern = '0.6.0'
 bincode = '1.2.1'
 lazy_static = '1.4.0'
-nalgebra = "0.20.0"
-parking_lot = "0.10.0"
+nalgebra = '0.20.0'
+parking_lot = '0.10.0'
 paste = "0.1.7"
 bridgevr_common = { path = '../common' }
 openvr-driver-sys = { path = '../openvr-driver-sys' }
