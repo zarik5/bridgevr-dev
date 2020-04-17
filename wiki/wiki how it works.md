@@ -8,14 +8,13 @@ The most important libraries used by BridgeVR are:
 
 * [Serde](https://github.com/serde-rs) for settings and packets de/serialization.
 * [Laminar](https://github.com/amethyst/laminar) as the network protocol.
-* [gfx-hal](https://github.com/gfx-rs/gfx) as a graphics abstraction layer.
+* [gfx-hal](https://github.com/gfx-rs/gfx) as a graphics abstraction layer based on Vulkan.
 * [FFmpeg](https://ffmpeg.org/) for video encoder and decoder.
 * [CPAL](https://github.com/RustAudio/cpal) and [Oboe](https://github.com/google/oboe) for audio recording/playback.
 * [android-glue](https://github.com/rust-windowing/android-rs-glue) for writing all Rust android app.
 * [OpenVR](https://github.com/ValveSoftware/openvr) driver as the VR server (through a custom wrapper and FFI bindings). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
-* [Oculus Mobile SDK](https://developer.oculus.com/downloads/package/oculus-mobile-sdk/) as Oculus Quest and Go VR client (through FFI bindings).
 * [OpenXR](https://www.khronos.org/openxr/) as an alternative VR client (limited support). This allows BridgeVR to potentially support an increasing number of VR headsets.
-* [Node.js](https://nodejs.org/en/) and [Electron](https://www.electronjs.org/) for the GUI.
+* [Flutter](https://github.com/flutter-rs/flutter-rs) for the GUI.
 
 ## Client-server communication
 
@@ -67,7 +66,7 @@ This leaves two more problems: calculate the total latency (for pose prediction,
 
 ### Audio
 
-Regarding audio (game sound and microphone) right now an analog approach is not possible because the library that BridgeVR uses does not allow to choose neither polling not submission times of the audio samples nor buffer size. BridgeVR then just waits when there are no samples to submit or drops a few samples when the latency is too high.
+Regarding audio (game sound and microphone) right now an analog approach is not possible because the library that BridgeVR uses does not allow to choose neither polling not submission times of the audio samples nor buffer size. When there are no samples to submit, BridgeVR just waits, or when the latency is too high, it drops a few samples.
 
 ## Foveated Rendering and sliced encoding
 

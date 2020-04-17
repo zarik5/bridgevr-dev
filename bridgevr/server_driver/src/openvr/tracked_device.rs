@@ -15,99 +15,99 @@ use std::{
 const HAPTIC_PATH: &str = "/output/haptic";
 
 pub struct TrackedDeviceContext {
-    pub device_type: TrackedDeviceType,
-    pub object_id: Mutex<Option<u32>>,
-    pub settings: Arc<Mutex<OpenvrSettings>>,
-    pub pose: Mutex<vr::DriverPose_t>,
-    pub input_to_component_map: Mutex<HashMap<String, vr::VRInputComponentHandle_t>>,
-    pub haptic_component: Mutex<vr::VRInputComponentHandle_t>,
-    pub shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
+    // pub device_type: TrackedDeviceType,
+    // pub object_id: Mutex<Option<u32>>,
+    // pub settings: Arc<Mutex<OpenvrSettings>>,
+    // pub pose: Mutex<vr::DriverPose_t>,
+    // pub input_to_component_map: Mutex<HashMap<String, vr::VRInputComponentHandle_t>>,
+    // pub haptic_component: Mutex<vr::VRInputComponentHandle_t>,
+    // pub shutdown_signal_sender: Arc<Mutex<Sender<ShutdownSignal>>>,
 }
 
 pub extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitError {
     let context = unsafe { &*(context as *const TrackedDeviceContext) };
 
-    *context.object_id.lock() = Some(object_id);
-    let container = unsafe { vr::vrTrackedDeviceToPropertyContainer(object_id) };
+    // *context.object_id.lock() = Some(object_id);
+    // let container = unsafe { vr::vrTrackedDeviceToPropertyContainer(object_id) };
 
-    match context.device_type {
-        TrackedDeviceType::HMD => {
-            //todo
-        }
-        TrackedDeviceType::LeftController => {
-            //todo
-        }
-        TrackedDeviceType::RightController => {
-            //todo
-        }
-        _ => {
-            //todo
-        }
-    }
+    // match context.device_type {
+    //     TrackedDeviceType::HMD => {
+    //         //todo
+    //     }
+    //     TrackedDeviceType::LeftController => {
+    //         //todo
+    //     }
+    //     TrackedDeviceType::RightController => {
+    //         //todo
+    //     }
+    //     _ => {
+    //         //todo
+    //     }
+    // }
 
-    if let Some(tracked_device_desc) = context
-        .settings
-        .lock()
-        .tracked_devices
-        .iter()
-        .find(|td| td.device_type == context.device_type)
-    {
-        set_custom_props(container, &tracked_device_desc.properties);
+    // if let Some(tracked_device_desc) = context
+    //     .settings
+    //     .lock()
+    //     .tracked_devices
+    //     .iter()
+    //     .find(|td| td.device_type == context.device_type)
+    // {
+    //     set_custom_props(container, &tracked_device_desc.properties);
 
-        let mut component_map_ref = context.input_to_component_map.lock();
-        for (openvr_path, input_type, client_paths) in &tracked_device_desc.input_mapping {
-            // unwrap never fails
-            let openvr_path_c_string = CString::new(openvr_path.clone()).unwrap();
-            let mut component = vr::k_ulInvalidInputComponentHandle;
-            let res = unsafe {
-                match input_type {
-                    OpenvrInputType::Boolean => vr::vrDriverInputCreateBooleanComponent(
-                        container,
-                        openvr_path_c_string.as_ptr(),
-                        &mut component,
-                    ),
-                    OpenvrInputType::NormalizedOneSided => vr::vrDriverInputCreateScalarComponent(
-                        container,
-                        openvr_path_c_string.as_ptr(),
-                        &mut component,
-                        vr::VRScalarType_Absolute,
-                        vr::VRScalarUnits_NormalizedOneSided,
-                    ),
-                    OpenvrInputType::NormalizedTwoSided => vr::vrDriverInputCreateScalarComponent(
-                        container,
-                        openvr_path_c_string.as_ptr(),
-                        &mut component,
-                        vr::VRScalarType_Absolute,
-                        vr::VRScalarUnits_NormalizedTwoSided,
-                    ),
-                    OpenvrInputType::Skeletal => todo!(),
-                }
-            };
-            if res == 0 {
-                for path in client_paths {
-                    component_map_ref.insert(path.to_owned(), component);
-                }
-            } else {
-                warn!("Create {}: {}", openvr_path, res);
-            }
-        }
+    //     let mut component_map_ref = context.input_to_component_map.lock();
+    //     for (openvr_path, input_type, client_paths) in &tracked_device_desc.input_mapping {
+    //         // unwrap never fails
+    //         let openvr_path_c_string = CString::new(openvr_path.clone()).unwrap();
+    //         let mut component = vr::k_ulInvalidInputComponentHandle;
+    //         let res = unsafe {
+    //             match input_type {
+    //                 OpenvrInputType::Boolean => vr::vrDriverInputCreateBooleanComponent(
+    //                     container,
+    //                     openvr_path_c_string.as_ptr(),
+    //                     &mut component,
+    //                 ),
+    //                 OpenvrInputType::NormalizedOneSided => vr::vrDriverInputCreateScalarComponent(
+    //                     container,
+    //                     openvr_path_c_string.as_ptr(),
+    //                     &mut component,
+    //                     vr::VRScalarType_Absolute,
+    //                     vr::VRScalarUnits_NormalizedOneSided,
+    //                 ),
+    //                 OpenvrInputType::NormalizedTwoSided => vr::vrDriverInputCreateScalarComponent(
+    //                     container,
+    //                     openvr_path_c_string.as_ptr(),
+    //                     &mut component,
+    //                     vr::VRScalarType_Absolute,
+    //                     vr::VRScalarUnits_NormalizedTwoSided,
+    //                 ),
+    //                 OpenvrInputType::Skeletal => todo!(),
+    //             }
+    //         };
+    //         if res == 0 {
+    //             for path in client_paths {
+    //                 component_map_ref.insert(path.to_owned(), component);
+    //             }
+    //         } else {
+    //             warn!("Create {}: {}", openvr_path, res);
+    //         }
+    //     }
 
-        // unwrap never fails
-        let haptic_path_c_string = CString::new(HAPTIC_PATH).unwrap();
-        let mut component = vr::k_ulInvalidInputComponentHandle;
-        let res = unsafe {
-            vr::vrDriverInputCreateHapticComponent(
-                container,
-                haptic_path_c_string.as_ptr(),
-                &mut component,
-            )
-        };
-        if res == 0 {
-            *context.haptic_component.lock() = component;
-        } else {
-            warn!("Create {}: {}", HAPTIC_PATH, res);
-        }
-    }
+    //     // unwrap never fails
+    //     let haptic_path_c_string = CString::new(HAPTIC_PATH).unwrap();
+    //     let mut component = vr::k_ulInvalidInputComponentHandle;
+    //     let res = unsafe {
+    //         vr::vrDriverInputCreateHapticComponent(
+    //             container,
+    //             haptic_path_c_string.as_ptr(),
+    //             &mut component,
+    //         )
+    //     };
+    //     if res == 0 {
+    //         *context.haptic_component.lock() = component;
+    //     } else {
+    //         warn!("Create {}: {}", HAPTIC_PATH, res);
+    //     }
+    // }
 
     vr::VRInitError_None
 }
@@ -115,13 +115,13 @@ pub extern "C" fn activate(context: *mut c_void, object_id: u32) -> vr::EVRInitE
 pub extern "C" fn deactivate(context: *mut c_void) {
     let context = unsafe { &*(context as *const TrackedDeviceContext) };
 
-    *context.object_id.lock() = None;
+    // *context.object_id.lock() = None;
 
-    context
-        .shutdown_signal_sender
-        .lock()
-        .send(ShutdownSignal::BackendShutdown)
-        .ok();
+    // context
+    //     .shutdown_signal_sender
+    //     .lock()
+    //     .send(ShutdownSignal::BackendShutdown)
+    //     .ok();
 }
 
 pub extern "C" fn empty_fn(_: *mut c_void) {}
@@ -137,7 +137,36 @@ pub extern "C" fn debug_request(_: *mut c_void, _: *const c_char, _: *mut c_char
 pub extern "C" fn get_pose(context: *mut c_void) -> vr::DriverPose_t {
     let context = unsafe { &*(context as *const TrackedDeviceContext) };
 
-    *context.pose.lock()
+    // *context.pose.lock()
+    
+
+    const DEFAULT_HMD_QUATERNION: vr::HmdQuaternion_t = vr::HmdQuaternion_t {
+        w: 1_f64,
+        x: 0_f64,
+        y: 0_f64,
+        z: 0_f64,
+    };
+    
+    const DEFAULT_DRIVER_POSE: vr::DriverPose_t = vr::DriverPose_t {
+        poseTimeOffset: 0_f64,
+        qWorldFromDriverRotation: DEFAULT_HMD_QUATERNION,
+        vecWorldFromDriverTranslation: [0_f64; 3],
+        qDriverFromHeadRotation: DEFAULT_HMD_QUATERNION,
+        vecDriverFromHeadTranslation: [0_f64; 3],
+        vecPosition: [0_f64; 3],
+        vecVelocity: [0_f64; 3],
+        vecAcceleration: [0_f64; 3],
+        qRotation: DEFAULT_HMD_QUATERNION,
+        vecAngularVelocity: [0_f64; 3],
+        vecAngularAcceleration: [0_f64; 3],
+        result: vr::TrackingResult_Running_OK,
+        poseIsValid: true,
+        willDriftInYaw: false,
+        shouldApplyHeadModel: false,
+        deviceIsConnected: true,
+    };
+
+    DEFAULT_DRIVER_POSE
 }
 
 pub fn create_tracked_device_callbacks(

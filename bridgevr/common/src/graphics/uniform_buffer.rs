@@ -53,28 +53,29 @@ impl UniformBuffer {
     }
 
     pub fn write<T: 'static>(&self, data: &T) -> StrResult {
-        // Cannot check this at compilation time: UniformBuffer cannot have type parameters because
-        // I want multiple UniformBuffer with different struct types in the same operation desc vec.
-        debug_assert_eq!(TypeId::of::<T>(), self.struct_type);
+        // // Cannot check this at compilation time: UniformBuffer cannot have type parameters because
+        // // I want multiple UniformBuffer with different struct types in the same operation desc vec.
+        // debug_assert_eq!(TypeId::of::<T>(), self.struct_type);
 
-        let data_size = size_of::<T>();
-        unsafe {
-            let mapping = trace_err!(self
-                .graphics
-                .device
-                .map_memory(&self.buffer_memory, 0..data_size as _))?;
+        // let data_size = size_of::<T>();
+        // unsafe {
+        //     let mapping = trace_err!(self
+        //         .graphics
+        //         .device
+        //         .map_memory(&self.buffer_memory, 0..data_size as _))?;
 
-            ptr::copy_nonoverlapping(data as *const _ as *const u8, mapping, data_size);
+        //     ptr::copy_nonoverlapping(data as *const _ as *const u8, mapping, data_size);
 
-            // do not early return if flush fails because the buffer memory must be unmapped
-            self.graphics
-                .device
-                .flush_mapped_memory_ranges(iter::once((&*self.buffer_memory, 0..data_size as _)))
-                .map_err(|e| error!("[Graphics] Buffer map flush: {}", e))
-                .ok();
-            self.graphics.device.unmap_memory(&self.buffer_memory);
-        }
-        Ok(())
+        //     // do not early return if flush fails because the buffer memory must be unmapped
+        //     self.graphics
+        //         .device
+        //         .flush_mapped_memory_ranges(iter::once((&*self.buffer_memory, 0..data_size as _)))
+        //         .map_err(|e| error!("[Graphics] Buffer map flush: {}", e))
+        //         .ok();
+        //     self.graphics.device.unmap_memory(&self.buffer_memory);
+        // }
+        // Ok(())
+        todo!()
     }
 }
 

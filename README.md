@@ -30,7 +30,7 @@ BridgeVR does not require ARCore, ARKit, or any camera capabilities. It uses dee
 
 Please check out the [wiki](todo link).
 
-## Upcoming features - Help wanted!
+## Upcoming features - Help wanted
 
 I plan to turn this project into a fully fledged VR streamer (such as ALVR or Virtual Desktop) with cross platform support and some innovative features. If you're into UI developement or Rust programming and want to help me you can join me on my [Discord server](todo link).
 

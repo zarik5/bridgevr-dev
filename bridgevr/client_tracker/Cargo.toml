@@ -1,14 +1,14 @@
 [package]
 name = 'bridgevr_client_tracker'
-version = '0.0.1'
-authors = ['Riccardo Zaglia <github.com/zarik5>']
+version = '0.0.0'
+authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
 license = 'MIT'
 edition = '2018'
 
 [package.metadata.android]
 label = 'BridgeVR tracker'
 package_name = 'bvr.bridgevr.client_tracker'
-version_name = '0.0.1'
+version_name = '0.1.0-alpha.0'
 version_code = 1
 android_version = 29
 target_sdk_version = 29
@@ -79,7 +79,7 @@ name = 'android.permission.INTERNET'
 chrono = '0.4.11'
 log = '0.4.8'
 fern = '0.6.0'
-parking_lot = '0.10.0'
+parking_lot = '0.10.2'
 bridgevr_common = { path = '../common' }
 
 

@@ -2,14 +2,11 @@
 
 ## Setup environment
 
-Look at the installation script to set environment variables and open firewall ports, or just install the latest version of BridgeVR.
-
 ### Dependencies
 
 * [rustup](https://rustup.rs/) (install default toolchain for your platform)
 * LLVM & Clang
-* npm
-* [gstreamer](https://gstreamer.freedesktop.org/documentation/installing/index.html?gi-language=c) (normal and devel packages)
+* Flutter SDK
 
 additional dependencies for Linux:
 
@@ -18,6 +15,10 @@ additional dependencies for Linux:
 additional dependencies for Windows:
 
 * MSVC compiler
+
+### Flutter
+
+Clone Flutter SDK from [master branch](https://github.com/flutter/flutter), add `C:\your\path\to\flutter\bin` to `Path` environment vartiable, then follow the guide [here](https://github.com/flutter/flutter/wiki/Desktop-shells)
 
 ### Build release
 

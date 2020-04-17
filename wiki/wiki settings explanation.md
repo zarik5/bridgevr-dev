@@ -29,7 +29,7 @@ Supported parameters:
 * `"socket_event_buffer_size"`
 * `"max_packets_in_flight"`
 
-If any field is omitted, the default value is used.
+If any field is omitted, the default value is used, as specified in Laminar documentation.
 
 ## video: frame_size
 

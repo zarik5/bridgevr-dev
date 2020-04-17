@@ -1,13 +1,19 @@
 use pico_args::Arguments;
 use std::{env, path::Path};
-use xtask::*;
+use bridgevr_xtask::*;
 
 fn ok_or_exit(res: Result<(), String>) {
     use std::process::exit;
-    use termion::color::*;
 
     if let Err(e) = res {
-        println!("{}{}{}", Fg(Red), e, Fg(Reset));
+        #[cfg(not(windows))]
+        {
+            use termion::color::*;
+            println!("{}{}{}", Fg(Red), e, Fg(Reset));
+        }
+        #[cfg(windows)]
+        println!("{}", e);
+
         exit(1);
     }
 }
@@ -16,7 +22,7 @@ fn print_help() {
     println!(
         r#"
 cargo xtask
-Build BridgeVR.
+Developement actions for BridgeVR.
 
 USAGE:
     cargo xtask <SUBCOMMAND> [FLAG]
@@ -24,13 +30,13 @@ USAGE:
 
 SUBCOMMANDS:
     install-deps        Install required cargo third-party subcommands
-    release-server      Resets platform specific server build folder, then `build-server`
+    release-server      Resets platform specific server build folder, then 'build-server'
     build-server        Build server driver and GUI, then copy binaries to build folder
     build-client        Build client apk and copy it to build folder
-    build-all           Combines `build-server` and `build-client`
+    build-all           Combines 'build-server' and 'build-client'
     open-ports          Open ports 9943, 9944
     register-driver     Register BridgeVR driver in SteamVR
-    install-server      Combines `build-server`, `open-ports` and `register-driver`
+    install-server      Combines 'build-server', 'open-ports' and 'register-driver'
 
 FLAGS:
     --release           Build without debug info. Used only for build subcommands
@@ -53,7 +59,7 @@ fn main() {
                 "install-deps" => todo!(),
                 "release-server" => {
                     ok_or_exit(reset_server_build_folder());
-                    ok_or_exit(build_server(release, &target_dir));
+                    ok_or_exit(build_server(true, &target_dir));
                 }
                 "build-server" => ok_or_exit(build_server(release, &target_dir)),
                 "build-client" => ok_or_exit(build_client(release, &target_dir)),
@@ -67,14 +73,19 @@ fn main() {
                 _ => {
                     println!("\nError parsing subcommand.");
                     print_help();
+                    return;
                 }
             }
         } else {
             println!("\nWrong arguments.");
             print_help();
+            return;
         }
     } else {
         println!("\nError parsing subcommand.");
         print_help();
+        return;
     }
+
+    println!("\nDone\n");
 }

@@ -1,15 +1,14 @@
 [package]
 name = 'bridgevr_client_hmd'
-version = '0.0.1'
-authors = ['Riccardo Zaglia <github.com/zarik5>']
+version = '0.1.0-alpha.0'
+authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
 license = 'MIT'
 edition = '2018'
-build = 'build.rs'
 
 [package.metadata.android]
 label = 'BridgeVR'
 package_name = 'bvr.bridgevr.client_hmd'
-version_name = '0.0.1'
+version_name = '0.1.0-alpha.1'
 version_code = 1
 android_version = 29
 target_sdk_version = 29
@@ -91,15 +90,14 @@ name = 'android.permission.INTERNET'
 name = 'android.permission.RECORD_AUDIO'
 
 [dependencies]
-ash = '0.29.0'
+ash = '0.30.0'
 bridgevr_common = { path = '../common' }
 chrono = '0.4.11'
 fern = '0.6.0'
 log = '0.4.8'
-parking_lot = '0.10.0'
+parking_lot = '0.10.2'
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_glue = { git = 'https://github.com/rust-windowing/android-rs-glue' }
 android-ndk-sys = { git = 'https://github.com/rust-windowing/android-ndk-rs' }
 oboe = '0.1.0'
-ovr-mobile-sdk-sys = { path = '../ovr-mobile-sdk-sys', default-features = false, features = ['custom-version'] }

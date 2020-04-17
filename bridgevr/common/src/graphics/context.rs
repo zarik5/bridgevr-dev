@@ -1,4 +1,4 @@
-use crate::{constants::BVR_NAME, StrResult};
+use crate::{data::BVR_NAME, StrResult};
 pub use gfx_hal::format::Format;
 use gfx_hal::{adapter::MemoryType, prelude::*, queue::QueueGroup, *};
 use log::debug;
@@ -128,7 +128,8 @@ impl GraphicsContext {
     pub fn instance_ptr(&self) -> u64 {
         use ash::{version::InstanceV1_0, vk::Handle};
 
-        self.instance.raw.0.handle().as_raw()
+        // self.instance.raw.0.handle().as_raw()
+        todo!()
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -144,7 +145,8 @@ impl GraphicsContext {
         // todo: mod gfx-hal crate to access private fields
         let raw: &Arc<gfx_backend_vulkan::RawDevice> =
             unsafe { &*(&self.device as *const _ as *const _) };
-        raw.0.handle().as_raw()
+        // raw.0.handle().as_raw()
+        todo!()
     }
 
     #[cfg(windows)]

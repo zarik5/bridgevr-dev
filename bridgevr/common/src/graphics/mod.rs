@@ -70,43 +70,43 @@ impl OperationBuffer {
             }
         }
 
-        let bindings = [
-            DescriptorSetLayoutBinding {
-                binding: 0,
-                ty: pso::DescriptorType::SampledImage,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-            },
-            DescriptorSetLayoutBinding {
-                binding: 1,
-                ty: pso::DescriptorType::Sampler,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-            },
-        ];
-        let set_layout = ManuallyDrop::new(trace_err!(unsafe {
-            dev.create_descriptor_set_layout(&bindings, &[])
-        })?);
+        // let bindings = [
+        //     DescriptorSetLayoutBinding {
+        //         binding: 0,
+        //         ty: pso::DescriptorType::SampledImage,
+        //         count: 1,
+        //         stage_flags: ShaderStageFlags::FRAGMENT,
+        //         immutable_samplers: false,
+        //     },
+        //     DescriptorSetLayoutBinding {
+        //         binding: 1,
+        //         ty: pso::DescriptorType::Sampler,
+        //         count: 1,
+        //         stage_flags: ShaderStageFlags::FRAGMENT,
+        //         immutable_samplers: false,
+        //     },
+        // ];
+        // let set_layout = ManuallyDrop::new(trace_err!(unsafe {
+        //     dev.create_descriptor_set_layout(&bindings, &[])
+        // })?);
 
-        let mut desc_pool = ManuallyDrop::new(trace_err!(unsafe {
-            dev.create_descriptor_pool(
-                1, // sets
-                &[
-                    DescriptorRangeDesc {
-                        ty: DescriptorType::SampledImage,
-                        count: 1,
-                    },
-                    DescriptorRangeDesc {
-                        ty: DescriptorType::Sampler,
-                        count: 1,
-                    },
-                ],
-                DescriptorPoolCreateFlags::empty(),
-            )
-        })?);
-        let desc_set = trace_err!(unsafe { desc_pool.allocate_set(&set_layout) })?;
+        // let mut desc_pool = ManuallyDrop::new(trace_err!(unsafe {
+        //     dev.create_descriptor_pool(
+        //         1, // sets
+        //         &[
+        //             DescriptorRangeDesc {
+        //                 ty: DescriptorType::SampledImage,
+        //                 count: 1,
+        //             },
+        //             DescriptorRangeDesc {
+        //                 ty: DescriptorType::Sampler,
+        //                 count: 1,
+        //             },
+        //         ],
+        //         DescriptorPoolCreateFlags::empty(),
+        //     )
+        // })?);
+        // let desc_set = trace_err!(unsafe { desc_pool.allocate_set(&set_layout) })?;
 
         let sampler = trace_err!(unsafe {
             dev.create_sampler(&SamplerDesc::new(Filter::Linear, WrapMode::Clamp))

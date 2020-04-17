@@ -221,18 +221,6 @@ pub fn input_device_data_to_str_value_map(
                 ),
             ),
             (
-                "/oculus_touch/left/grip/touch",
-                InputValue::Boolean(
-                    digital_input.contains(OculusTouchDigitalInput::GRIP_LEFT_TOUCH),
-                ),
-            ),
-            (
-                "/oculus_touch/right/grip/touch",
-                InputValue::Boolean(
-                    digital_input.contains(OculusTouchDigitalInput::GRIP_RIGHT_TOUCH),
-                ),
-            ),
-            (
                 "/oculus_touch/menu/click",
                 InputValue::Boolean(digital_input.contains(OculusTouchDigitalInput::MENU)),
             ),

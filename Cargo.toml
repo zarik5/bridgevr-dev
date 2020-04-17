@@ -1,13 +1,14 @@
 [workspace]
 members = [
-    # 'bridgevr/openvr-driver-sys',
-    # 'bridgevr/common',
+    # 'openvr-driver-sys',
+    'bridgevr/derive',
+    'bridgevr/common',
     # 'bridgevr/server_bootstrap',
-    'bridgevr/server_driver',
+    # 'bridgevr/server_driver',
     'bridgevr/server_gui',
     # 'bridgevr/client_hmd',
     # 'bridgevr/client_tracker',
     # 'bridgevr/vulkan_test'
-    # 'bridgevr/openvr_test'
-    'bridgevr/xtask'
+    # 'bridgevr/xtask',
+    # 'bridgevr/derive'
 ]

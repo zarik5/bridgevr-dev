@@ -72,9 +72,8 @@ pub fn server_build_path() -> PathBuf {
     #[cfg(windows)]
     const OS_STR: &str = "windows";
 
-    std::env::current_dir()
-        .unwrap()
-        .join(format!("build/bridgevr_server_{}", OS_STR))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../build/bridgevr_server_{}", OS_STR))
 }
 
 pub fn reset_server_build_folder() -> Result<(), String> {
@@ -166,3 +165,20 @@ pub fn register_driver(server_path: &Path) -> Result<(), String> {
 pub fn unregister_driver() {}
 
 pub fn open_ports(ports: Vec<u16>) {}
+
+fn get_version(dir_name: &str) -> String {
+    let cargo_data = toml::from_slice::<toml::Value>(
+        &fs::read(Path::new("..").join(dir_name).join("Cargo.toml")).unwrap(),
+    )
+    .unwrap();
+
+    cargo_data["package"]["version"].as_str().unwrap().into()
+}
+
+pub fn server_driver_version() -> String {
+    get_version("server_driver")
+}
+
+pub fn client_version() -> String {
+    get_version("client_hmd")
+}

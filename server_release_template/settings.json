@@ -1,44 +1,9 @@
 {
-    "connections": {
-        "clients": {
-            "Count": 1
-        },
-        "starting_connection_port": 9944
-    },
-    "latency": {
-        "Automatic": {
-            "expected_missed_poses_per_hour": 10,
-            "expected_missed_frames_per_hour": 5,
-            "server_history_mean_lifetime_s": 5,
-            "client_history_mean_lifetime_s": 10
-        }
-    },
-    "bitrate": {
-        "Manual": {
-            "mbps": 30
-        }
-    },
-    "video": {
-        "frame_size": {
-            "Scale": 1.0
-        },
-        "encoder": {
-            "Gstreamer": "encodebin"
-        },
-        "decoder": {
-            "Gstreamer": "decodebin"
-        },
-        "foveated_rendering": {
-            "Enabled": {
-                "strength": 2,
-                "vertical_offset": 0
+    "openvr": {
+        "tracked_devices": [
+            {
+                "device_type": "HMD"
             }
-        },
-        "slices": {
-            "Count": 1
-        }
-    },
-    "audio": "Disabled",
-    "microphone": "Disabled",
-    "openvr": {}
+        ]
+    }
 }

@@ -41,7 +41,7 @@
         "xstring": "cpp",
         "functional": "cpp"
     },
-    "rust.target": "aarch64-linux-android",
+    // "rust.target": "aarch64-linux-android",
     // "rust-analyzer.cargo-watch.arguments": [
     //     "--target=aarch64-linux-android"
     // ]

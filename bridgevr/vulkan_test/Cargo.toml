@@ -1,18 +1,17 @@
 [package]
 name = 'vulkan_test'
 version = '0.1.0'
-authors = ['Riccardo Zaglia <github.com/zarik5>']
+authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
 license = 'MIT'
 edition = '2018'
-build = 'build.rs'
 
 [dependencies]
 bridgevr_common = { path = '../common' }
 winit = '0.22.0'
-ash = '0.29.0'
-parking_lot = '0.10.0'
+ash = '0.30.0'
+parking_lot = '0.10.2'
 safe-transmute = '0.11.0-rc.2'
-png = '0.16.1'
+png = '0.16.2'
 
 [build-dependencies]
 shaderc = '0.6.2'

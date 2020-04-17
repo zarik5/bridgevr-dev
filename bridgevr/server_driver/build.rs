@@ -1,27 +1,15 @@
 use std::{env::var, path::PathBuf};
+use bridgevr_xtask::server_build_path;
 
 fn main() {
-    let is_release = var("PROFILE").unwrap() == "release";
-
-    // forward environment variables info to current crate
-    let bvr_install_root = if is_release {
-        PathBuf::from(var("INSTALL_ROOT").expect("Environment variable INSTALL_ROOT"))
+    let server_install_root = if let Ok(install_root_str) = var("INSTALL_ROOT") {
+        PathBuf::from(install_root_str)
     } else {
-        dirs::home_dir().unwrap().join(".bridgevr")
+        server_build_path()
     };
 
     println!(
-        "cargo:rustc-env=LOG_PATH={}",
-        bvr_install_root.join("log.txt").to_str().unwrap()
-    );
-
-    println!(
-        "cargo:rustc-env=SETTINGS_PATH={}",
-        bvr_install_root.join("settings.json").to_str().unwrap()
-    );
-
-    println!(
-        "cargo:rustc-env=SESSION_PATH={}",
-        bvr_install_root.join("session.json").to_str().unwrap()
+        "cargo:rustc-env=INSTALL_ROOT={}",
+        server_install_root.to_string_lossy()
     );
 }

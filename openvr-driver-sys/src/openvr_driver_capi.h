@@ -395,18 +395,20 @@ FORWARD_FN(VRProperties, HmdVector3_t, vr, GetVec3Property,
            PropertyContainerHandle_t, ETrackedDeviceProperty, ETrackedPropertyError *);
 FORWARD_FN(VRProperties, HmdVector4_t, vr, GetVec4Property,
            PropertyContainerHandle_t, ETrackedDeviceProperty, ETrackedPropertyError *);
-FORWARD_FN(VRProperties, uint32_t, vr, GetStringProperty,
-           PropertyContainerHandle_t,
-           ETrackedDeviceProperty,
-           char *,
-           uint32_t,
-           ETrackedPropertyError *);
+FORWARD_FN(VRProperties, double, vr, GetDoubleProperty,
+           PropertyContainerHandle_t, ETrackedDeviceProperty, ETrackedPropertyError *);
 FORWARD_FN(VRProperties, uint32_t, vr, GetProperty,
            PropertyContainerHandle_t,
            ETrackedDeviceProperty,
            void *,
            uint32_t,
            PropertyTypeTag_t *,
+           ETrackedPropertyError *);
+FORWARD_FN(VRProperties, uint32_t, vr, GetStringProperty,
+           PropertyContainerHandle_t,
+           ETrackedDeviceProperty,
+           char *,
+           uint32_t,
            ETrackedPropertyError *);
 FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetBoolProperty,
            PropertyContainerHandle_t, ETrackedDeviceProperty, bool);
@@ -422,6 +424,8 @@ FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetVec3Property,
            PropertyContainerHandle_t, ETrackedDeviceProperty, const HmdVector3_t &);
 FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetVec4Property,
            PropertyContainerHandle_t, ETrackedDeviceProperty, const HmdVector4_t &);
+FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetDoubleProperty,
+           PropertyContainerHandle_t, ETrackedDeviceProperty, double);
 FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetStringProperty,
            PropertyContainerHandle_t, ETrackedDeviceProperty, const char *);
 FORWARD_FN(VRProperties, ETrackedPropertyError, vr, SetProperty,
