@@ -1,54 +1,9 @@
 use crate::*;
-use bridgevr_derive::*;
 use serde::{Deserialize, Serialize};
-use serde_json as json;
+use settings_schema::{
+    DictionaryDefault, OptionalDefault, SettingsSchema, Switch, SwitchDefault, VectorDefault,
+};
 use std::{fs, path::*};
-
-/////////////////////////////////////////////////////////////
-// Schema auxiliary objects
-
-#[derive(Serialize, Deserialize, Clone)]
-pub enum Switch<T> {
-    Enabled(T),
-    Disabled,
-}
-
-impl<T> Switch<T> {
-    pub fn into_option(self) -> Option<T> {
-        match self {
-            Self::Enabled(t) => Some(t),
-            Self::Disabled => None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct SwitchDefault<C> {
-    pub enabled: bool,
-    pub content: C,
-}
-
-#[derive(Clone)]
-pub struct OptionalDefault<C> {
-    pub set: bool,
-    pub content: C,
-}
-
-#[derive(Clone)]
-pub struct VectorDefault<C, D> {
-    pub element: C,
-    pub default: Vec<D>,
-}
-
-#[derive(Clone)]
-pub struct DictionaryDefault<V, D> {
-    pub key: String,
-    pub value: V,
-    pub default: Vec<(String, D)>,
-}
-
-//////////////////////////////////////////////////////////////////////////
-// User settings
 
 #[derive(SettingsSchema, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub struct Fov {
@@ -165,7 +120,7 @@ pub struct VideoDecoderDesc {
 #[derive(SettingsSchema, Serialize, Deserialize, Clone)]
 pub enum LatencyMode {
     Automatic {
-        #[schema(min = 1, gui = "updown")]
+        #[schema(min = 1, gui = "UpDown")]
         expected_misses_per_hour: u32,
     },
     Manual,
@@ -175,10 +130,10 @@ pub enum LatencyMode {
 pub struct LatencyDesc {
     // todo: when the users set this to 0, show message:
     // "BridgeVR cannot do magic! A value greater than 0 is needed to avoid missing frames"
-    #[schema(gui = "updown")]
+    #[schema(gui = "UpDown")]
     pub default_ms: u32,
 
-    #[schema(advanced, gui = "updown")]
+    #[schema(advanced, gui = "UpDown")]
     pub history_mean_lifetime_s: u32,
 
     pub mode: LatencyMode,
@@ -199,7 +154,7 @@ pub struct VideoDesc {
 
     pub foveated_rendering: Switch<FoveatedRenderingDesc>,
 
-    #[schema(advanced, min = 1, max = 8, gui = "updown")]
+    #[schema(advanced, min = 1, max = 8, gui = "UpDown")]
     pub frame_slice_count: u8,
 
     #[schema(advanced)]
@@ -336,10 +291,10 @@ pub enum HmdTrackingMode {
 
 #[derive(SettingsSchema, Serialize, Deserialize, Clone)]
 pub struct OvrMobileDesc {
-    #[schema(min = 0, max = 3, gui = "slider")]
+    #[schema(min = 0, max = 3, gui = "Slider")]
     pub cpu_level: i32,
 
-    #[schema(min = 0, max = 3, gui = "slider")]
+    #[schema(min = 0, max = 3, gui = "Slider")]
     pub gpu_level: i32,
 
     pub dynamic_clock_throttling: bool,
@@ -379,7 +334,7 @@ pub struct Settings {
 
 pub fn load_settings(path: &Path) -> StrResult<Settings> {
     const TRACE_CONTEXT: &str = "Settings";
-    trace_err!(json::from_str(&trace_err!(fs::read_to_string(path))?))
+    trace_err!(serde_json::from_str(&trace_err!(fs::read_to_string(path))?))
 }
 
 pub fn settings_default() -> SettingsDefault {

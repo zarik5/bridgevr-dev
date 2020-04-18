@@ -111,7 +111,7 @@ fn schema_attributes(attrs: Vec<Attribute>) -> Result<SchemaAttributes, TokenStr
 
 struct TypeSchema {
     default_ty_ts: TokenStream2,
-    json_code_ts: TokenStream2,
+    schema_code_ts: TokenStream2,
 }
 
 fn bool_type_schema(schema_attrs: SchemaAttributes) -> Result<TokenStream2, TokenStream> {
@@ -131,16 +131,15 @@ fn bool_type_schema(schema_attrs: SchemaAttributes) -> Result<TokenStream2, Toke
     }
 
     let advanced = schema_attrs.advanced;
-    Ok(quote! {{
-        serde_json::json! {{
-            "type": "bool",
-            "advanced": #advanced,
-            "default": default
-        }}
-    }})
+    Ok(quote! {
+        settings_schema::SchemaNode {
+            advanced: #advanced,
+            node_type: settings_schema::SchemaNodeType::Boolean { default }
+        }
+    })
 }
 
-fn integer_literal(literal: Lit) -> Result<TokenStream2, TokenStream> {
+fn integer_literal_tokens(literal: Lit) -> Result<TokenStream2, TokenStream> {
     if let Lit::Int(lit_int) = literal {
         Ok(quote!(#lit_int))
     } else {
@@ -148,23 +147,33 @@ fn integer_literal(literal: Lit) -> Result<TokenStream2, TokenStream> {
     }
 }
 
-fn float_literal(literal: Lit) -> Result<TokenStream2, TokenStream> {
-    if let Lit::Float(lit_float) = literal {
-        Ok(quote!(#lit_float))
+fn maybe_float_literal(literal: Option<Lit>) -> Result<TokenStream2, TokenStream> {
+    if let Some(literal) = literal {
+        if let Lit::Float(lit_float) = literal {
+            Ok(quote!(Some(#lit_float as _)))
+        } else {
+            error("Expected float literal", literal)
+        }
     } else {
-        error("Expected float literal", literal)
+        Ok(quote!(None))
     }
 }
 
-fn num_gui_string_literal(literal: Lit) -> Result<TokenStream2, TokenStream> {
-    if let Lit::Str(lit_str) = literal {
-        if matches!(lit_str.value().as_str(), "textbox" | "updown" | "slider") {
-            Ok(quote!(#lit_str))
+fn maybe_numeric_gui(literal: Option<Lit>) -> Result<TokenStream2, TokenStream> {
+    if let Some(literal) = literal {
+        if let Lit::Str(lit_str) = literal {
+            let lit_val = lit_str.value();
+            if matches!(lit_val.as_str(), "TextBox" | "UpDown" | "Slider") {
+                let ident = Ident::new(&lit_val, lit_str.span());
+                Ok(quote!(Some(settings_schema::NumericGuiType::#ident)))
+            } else {
+                error(r#"Expected "TextBox", "UpDown" or "Slider""#, lit_str)
+            }
         } else {
-            error(r#"Expected "textbox", "updown" or "slider""#, lit_str)
+            error("Expected string literal", literal)
         }
     } else {
-        error("Expected string literal", literal)
+        Ok(quote!(None))
     }
 }
 
@@ -173,82 +182,60 @@ fn integer_type_schema(
     schema_attrs: SchemaAttributes,
 ) -> Result<TokenStream2, TokenStream> {
     let min_ts = if let Some(literal) = schema_attrs.min {
-        integer_literal(literal)?
+        integer_literal_tokens(literal)?
     } else {
         quote!(std::#ty_ident::MIN)
     };
     let max_ts = if let Some(literal) = schema_attrs.max {
-        integer_literal(literal)?
+        integer_literal_tokens(literal)?
     } else {
         quote!(std::#ty_ident::MAX)
     };
     let step_ts = if let Some(literal) = schema_attrs.step {
-        integer_literal(literal)?
+        integer_literal_tokens(literal)?
     } else {
         quote!(1)
     };
-    let gui_ts = if let Some(literal) = schema_attrs.gui {
-        num_gui_string_literal(literal)?
-    } else {
-        quote!("textbox")
-    };
+    let gui_ts = maybe_numeric_gui(schema_attrs.gui)?;
 
     let advanced = schema_attrs.advanced;
     Ok(quote! {{
-        let min = #min_ts;
-        let max = #max_ts;
-        serde_json::json! {{
-            "type": "integer",
-            "advanced": #advanced,
-            "min": min,
-            "max": max,
-            "step": #step_ts,
-            "gui": #gui_ts,
-            "default": default
-        }}
+        // use explicit type to catch overflows at compile time
+        let min: #ty_ident = #min_ts;
+        let max: #ty_ident = #max_ts;
+        let step: #ty_ident = #step_ts;
+        settings_schema::SchemaNode {
+            advanced: #advanced,
+            node_type: settings_schema::SchemaNodeType::Integer {
+                default: default as _,
+                min: min as _,
+                max: max as _,
+                step: step as _,
+                gui: #gui_ts,
+            }
+        }
     }})
 }
 
 fn float_type_schema(schema_attrs: SchemaAttributes) -> Result<TokenStream2, TokenStream> {
-    let (min_ts, min_set) = if let Some(literal) = schema_attrs.min {
-        (float_literal(literal)?, true)
-    } else {
-        (quote!(null), false)
-    };
-    let (max_ts, max_set) = if let Some(literal) = schema_attrs.max {
-        (float_literal(literal)?, true)
-    } else {
-        (quote!(null), false)
-    };
-    let (step_ts, step_set) = if let Some(literal) = schema_attrs.step {
-        (float_literal(literal)?, true)
-    } else {
-        (quote!(null), false)
-    };
-    let gui_ts = if let Some(literal) = schema_attrs.gui {
-        num_gui_string_literal(literal)?
-    } else if step_set {
-        if max_set && min_set {
-            quote!("slider")
-        } else {
-            quote!("updown")
-        }
-    } else {
-        quote!("textbox")
-    };
+    let min_ts = maybe_float_literal(schema_attrs.min)?;
+    let max_ts = maybe_float_literal(schema_attrs.max)?;
+    let step_ts = maybe_float_literal(schema_attrs.step)?;
+    let gui_ts = maybe_numeric_gui(schema_attrs.gui)?;
 
     let advanced = schema_attrs.advanced;
-    Ok(quote! {{
-        serde_json::json! {{
-            "type": "float",
-            "advanced": #advanced,
-            "min": #min_ts,
-            "max": #max_ts,
-            "step": #step_ts,
-            "gui": #gui_ts,
-            "default": default
-        }}
-    }})
+    Ok(quote! {
+        settings_schema::SchemaNode {
+            advanced: #advanced,
+            node_type: settings_schema::SchemaNodeType::Float {
+                default: default as _,
+                min: #min_ts,
+                max: #max_ts,
+                step: #step_ts,
+                gui: #gui_ts,
+            }
+        }
+    })
 }
 
 fn string_type_schema(schema_attrs: SchemaAttributes) -> Result<TokenStream2, TokenStream> {
@@ -268,13 +255,12 @@ fn string_type_schema(schema_attrs: SchemaAttributes) -> Result<TokenStream2, To
     }
 
     let advanced = schema_attrs.advanced;
-    Ok(quote! {{
-        serde_json::json! {{
-            "type": "text",
-            "advanced": #advanced,
-            "default": default
-        }}
-    }})
+    Ok(quote! {
+        settings_schema::SchemaNode {
+            advanced: #advanced,
+            node_type: settings_schema::SchemaNodeType::Text { default }
+        }
+    })
 }
 
 fn custom_leaf_type_schema(
@@ -300,7 +286,7 @@ fn custom_leaf_type_schema(
     let advanced = schema_attrs.advanced;
     Ok(quote! {{
         let mut default = #leaf_schema_fn_ident(default);
-        default["advanced"] = serde_json::Value::Bool(#advanced);
+        default.advanced = #advanced;
         default
     }})
 }
@@ -312,25 +298,24 @@ fn type_schema(ty: &Type, schema_attrs: SchemaAttributes) -> Result<TypeSchema, 
             let len = &ty_array.len;
             let TypeSchema {
                 default_ty_ts,
-                json_code_ts,
+                schema_code_ts,
             } = type_schema(&*ty_array.elem, schema_attrs)?;
             Ok(TypeSchema {
                 default_ty_ts: quote!([#default_ty_ts; #len]),
-                json_code_ts: quote! {{
-                    let len = #len;
+                schema_code_ts: quote! {{
+                    let length = #len;
                     // Note: for arrays, into_iter() behaves like iter(), because of a
                     // implementation complication in the std library. Blocked by const generics.
                     // For now clone() is necessary.
                     let content = default.iter().map(|default| {
                         let default = default.clone();
-                        #json_code_ts
+                        #schema_code_ts
                     }).collect::<Vec<_>>();
-                    serde_json::json! {{
-                        "type": "array",
-                        "advanced": #advanced,
-                        "length": len,
-                        "content": content
-                    }}
+
+                    settings_schema::SchemaNode {
+                        advanced: #advanced,
+                        node_type: settings_schema::SchemaNodeType::Array(content),
+                    }
                 }},
             })
         }
@@ -339,7 +324,7 @@ fn type_schema(ty: &Type, schema_attrs: SchemaAttributes) -> Result<TypeSchema, 
             let ty_ident = &ty_last.ident;
             if matches!(ty_last.arguments, PathArguments::None) {
                 let mut custom_default_ty_ts = None;
-                let json_code_ts = match ty_ident.to_string().as_str() {
+                let schema_code_ts = match ty_ident.to_string().as_str() {
                     "bool" => bool_type_schema(schema_attrs)?,
                     "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" => {
                         integer_type_schema(ty_ident, schema_attrs)?
@@ -358,44 +343,40 @@ fn type_schema(ty: &Type, schema_attrs: SchemaAttributes) -> Result<TypeSchema, 
                     } else {
                         ty_ident.to_token_stream()
                     },
-                    json_code_ts,
+                    schema_code_ts,
                 })
             } else if ty_ident == "Option" {
                 let TypeSchema {
                     default_ty_ts,
-                    json_code_ts,
+                    schema_code_ts,
                 } = type_schema(get_only_type_argument(&ty_last.arguments), schema_attrs)?;
                 Ok(TypeSchema {
-                    default_ty_ts: quote!(OptionalDefault<#default_ty_ts>),
-                    json_code_ts: quote! {{
-                        let set = default.set;
+                    default_ty_ts: quote!(settings_schema::OptionalDefault<#default_ty_ts>),
+                    schema_code_ts: quote! {{
+                        let default_set = default.set;
                         let default = default.content;
-                        let content = #json_code_ts;
-                        serde_json::json! {{
-                            "type": "optional",
-                            "advanced": #advanced,
-                            "default_set": set,
-                            "content": content
-                        }}
+                        let content = Box::new(#schema_code_ts);
+                        settings_schema::SchemaNode {
+                            advanced: #advanced,
+                            node_type: settings_schema::SchemaNodeType::Optional { default_set, content }
+                        }
                     }},
                 })
             } else if ty_ident == "Switch" {
                 let TypeSchema {
                     default_ty_ts,
-                    json_code_ts,
+                    schema_code_ts,
                 } = type_schema(get_only_type_argument(&ty_last.arguments), schema_attrs)?;
                 Ok(TypeSchema {
-                    default_ty_ts: quote!(SwitchDefault<#default_ty_ts>),
-                    json_code_ts: quote! {{
-                        let enabled = default.enabled;
+                    default_ty_ts: quote!(settings_schema::SwitchDefault<#default_ty_ts>),
+                    schema_code_ts: quote! {{
+                        let default_enabled = default.enabled;
                         let default = default.content;
-                        let content = #json_code_ts;
-                        serde_json::json! {{
-                            "type": "switch",
-                            "advanced": #advanced,
-                            "default_enabled": enabled,
-                            "content": content
-                        }}
+                        let content = Box::new(#schema_code_ts);
+                        settings_schema::SchemaNode {
+                            advanced: #advanced,
+                            node_type: settings_schema::SchemaNodeType::Switch { default_enabled, content }
+                        }
                     }},
                 })
             } else if ty_ident == "Vec" {
@@ -409,46 +390,45 @@ fn type_schema(ty: &Type, schema_attrs: SchemaAttributes) -> Result<TypeSchema, 
                         let ty = &ty_tuple.elems[1];
                         let TypeSchema {
                             default_ty_ts,
-                            json_code_ts,
+                            schema_code_ts,
                         } = type_schema(ty, schema_attrs)?;
                         Ok(TypeSchema {
-                            default_ty_ts: quote!(DictionaryDefault<#default_ty_ts, #ty>),
-                            json_code_ts: quote! {{
-                                let key = default.key;
-                                let value = {
-                                    let default = default.value;
-                                    #json_code_ts
-                                };
-                                let default = default.default;
-                                serde_json::json! {{
-                                    "type": "dictionary",
-                                    "advanced": #advanced,
-                                    "default_key": key,
-                                    "default_value": value,
-                                    "default": default
-                                }}
+                            default_ty_ts: quote!(settings_schema::DictionaryDefault<#default_ty_ts, #ty>),
+                            schema_code_ts: quote! {{
+                                let default_content =
+                                    serde_json::to_value(default.default).unwrap();
+                                let default_key = default.key;
+                                let default = default.value;
+                                let default_value = Box::new(#schema_code_ts);
+                                settings_schema::SchemaNode {
+                                    advanced: #advanced,
+                                    node_type: settings_schema::SchemaNodeType::Dictionary {
+                                        default_key,
+                                        default_value,
+                                        default: default_content }
+                                }
                             }},
                         })
                     }
                 } else {
                     let TypeSchema {
                         default_ty_ts,
-                        json_code_ts,
+                        schema_code_ts,
                     } = type_schema(ty, schema_attrs)?;
                     Ok(TypeSchema {
-                        default_ty_ts: quote!(VectorDefault<#default_ty_ts, #ty>),
-                        json_code_ts: quote! {{
-                            let element = {
-                                let default = default.element;
-                                #json_code_ts
-                            };
-                            let default = default.default;
-                            serde_json::json! {{
-                                "type": "vector",
-                                "advanced": #advanced,
-                                "default_element": element,
-                                "default": default
-                            }}
+                        default_ty_ts: quote!(settings_schema::VectorDefault<#default_ty_ts, #ty>),
+                        schema_code_ts: quote! {{
+                            let default_content =
+                                serde_json::to_value(default.default).unwrap();
+                            let default = default.element;
+                            let default_element = Box::new(#schema_code_ts);
+                            settings_schema::SchemaNode {
+                                advanced: #advanced,
+                                node_type: settings_schema::SchemaNodeType::Vector {
+                                    default_element,
+                                    default: default_content
+                                }
+                            }
                         }},
                     })
                 }
@@ -476,45 +456,43 @@ fn schema_attrs(attrs: Vec<Attribute>) -> Vec<Attribute> {
 struct NamedFieldsData {
     idents: Vec<Ident>,
     tys_ts: Vec<TokenStream2>,
-    json_code_ts: TokenStream2,
+    schema_code_ts: TokenStream2,
 }
 
 fn schema_named_fields(fields_block: FieldsNamed) -> Result<NamedFieldsData, TokenStream> {
     let mut idents = vec![];
     let mut tys_ts = vec![];
-    let mut json_values_ts = vec![];
+    let mut schema_values_ts = vec![];
     for field in fields_block.named {
         let schema_attrs = schema_attributes(field.attrs)?;
         let TypeSchema {
             default_ty_ts,
-            json_code_ts,
+            schema_code_ts,
         } = type_schema(&field.ty, schema_attrs)?;
         idents.push(field.ident.unwrap());
         tys_ts.push(default_ty_ts);
-        json_values_ts.push(json_code_ts);
+        schema_values_ts.push(schema_code_ts);
     }
 
-    let json_keys = idents.iter().map(ToString::to_string);
-    let json_code_ts = quote! {{
+    let schema_keys = idents.iter().map(ToString::to_string);
+    let schema_code_ts = quote! {{
+        let mut entries = vec![];
         #(
-            let #idents = {
+            entries.push({
                 let default = default.#idents;
-                #json_values_ts
-            };
+                (#schema_keys.into(), #schema_values_ts)
+            });
         )*
-        serde_json::json! {{
-            "type": "section",
-            "advanced": false,
-            "content": {
-                #(#json_keys: #idents),*
-            }
-        }}
+        settings_schema::SchemaNode {
+            advanced: false,
+            node_type: settings_schema::SchemaNodeType::Section { entries }
+        }
     }};
 
     Ok(NamedFieldsData {
         idents,
         tys_ts,
-        json_code_ts,
+        schema_code_ts,
     })
 }
 
@@ -537,7 +515,7 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
 
     let mut field_idents = vec![];
     let mut field_tys_ts = vec![];
-    let json_root_code_ts;
+    let schema_root_code_ts;
     let mut maybe_aux_objects_ts = None;
     match input.data {
         Data::Struct(data_struct) => {
@@ -546,7 +524,7 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
                     let fields_data = schema_named_fields(fields_block)?;
                     field_idents = fields_data.idents;
                     field_tys_ts = fields_data.tys_ts;
-                    json_root_code_ts = fields_data.json_code_ts;
+                    schema_root_code_ts = fields_data.schema_code_ts;
                 }
                 Fields::Unnamed(fields_block) => {
                     return error("Unnamed fields not supported", fields_block)
@@ -558,8 +536,9 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
             let variant_ty_ident = suffix_ident(&input.ident, "DefaultVariant");
 
             let mut variant_idents = vec![];
-            let mut aux_objects_ts = vec![];
-            let mut json_variants_ts = vec![];
+            let mut variant_strings = vec![];
+            let mut variant_aux_objects_ts = vec![];
+            let mut schema_variants_ts = vec![];
             for variant in data_enum.variants {
                 let schema_attrs = schema_attributes(variant.attrs)?;
                 let variant_ident = variant.ident;
@@ -569,24 +548,19 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
                         let variant_fields_data = schema_named_fields(fields_block)?;
                         let variant_field_idents = variant_fields_data.idents;
                         let variant_field_tys_ts = variant_fields_data.tys_ts;
-                        let json_fields_code_ts = variant_fields_data.json_code_ts;
+                        let schema_variant_fields_code_ts = variant_fields_data.schema_code_ts;
 
                         let variant_default_ty_ident =
                             suffix_ident(&input.ident, &format!("{}Default", variant_string));
 
                         field_idents.push(variant_ident.clone());
                         field_tys_ts.push(variant_default_ty_ident.to_token_stream());
-
-                        let json_fields_code_ts = quote! {{
+                        schema_variants_ts.push(quote!{{
                             let default = default.#variant_ident;
-                            let content = #json_fields_code_ts;
-                            serde_json::json! {{
-                                #variant_string: content
-                            }}
-                        }};
-                        json_variants_ts.push(json_fields_code_ts);
+                            Some(#schema_variant_fields_code_ts)
+                        }});
 
-                        aux_objects_ts.push(quote! {
+                        variant_aux_objects_ts.push(quote! {
                             #[derive(Clone)]
                             #vis struct #variant_default_ty_ident {
                                 pub #(#variant_field_idents: #variant_field_tys_ts,)*
@@ -601,30 +575,28 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
 
                         let TypeSchema {
                             default_ty_ts,
-                            json_code_ts,
+                            schema_code_ts,
                         } = type_schema(&fields_block.unnamed[0].ty, schema_attrs)?;
                         field_tys_ts.push(default_ty_ts);
 
-                        json_variants_ts.push(quote! {{
+                        schema_variants_ts.push(quote!{{
                             let default = default.#variant_ident;
-                            let variant_value = #json_code_ts;
-                            serde_json::json! {{
-                                #variant_string: variant_value
-                            }}
+                            Some(#schema_code_ts)
                         }});
                     }
                     Fields::Unit => {
-                        json_variants_ts.push(quote!(#variant_string));
+                        schema_variants_ts.push(quote!(None));
                     }
                 }
 
                 variant_idents.push(variant_ident);
+                variant_strings.push(variant_string);
             }
 
             maybe_aux_objects_ts = Some(quote! {
-                #(#aux_objects_ts)*
+                #(#variant_aux_objects_ts)*
 
-                #[derive(Clone)]
+                #[derive(serde::Serialize, serde::Deserialize, Clone)]
                 #vis enum #variant_ty_ident {
                     #(#variant_idents,)*
                 }
@@ -633,16 +605,22 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
             field_idents.push(Ident::new("variant", Span::call_site()));
             field_tys_ts.push(variant_ty_ident.to_token_stream());
 
-            // let variant_strs = variant_idents.iter().map(ToString::to_string);
-            json_root_code_ts = quote! {{
-                #(let #variant_idents = #json_variants_ts;)*
-                serde_json::json!{{
-                    "type": "choice",
-                    "advanced": false,
-                    "variants": [
-                        #(#variant_idents),*
-                    ]
-                }}
+            schema_root_code_ts = quote! {{
+                let mut variants = vec![];
+                #(variants.push((#variant_strings.into(), #schema_variants_ts));)*
+                let default = serde_json::to_value(default.variant)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .into();
+
+                settings_schema::SchemaNode {
+                    advanced: false,
+                    node_type: settings_schema::SchemaNodeType::Choice {
+                        variants,
+                        default,
+                    }
+                }
             }}
         }
         Data::Union(data_union) => return error("Unions not supported", data_union.union_token),
@@ -657,9 +635,8 @@ fn schema(input: DeriveInput) -> Result<TokenStream2, TokenStream> {
             #(pub #field_idents: #field_tys_ts,)*
         }
 
-        #vis fn #schema_fn_ident(default: #default_ty_ident) -> serde_json::Value {
-            #![allow(non_snake_case)]
-            #json_root_code_ts
+        #vis fn #schema_fn_ident(default: #default_ty_ident) -> settings_schema::SchemaNode {
+            #schema_root_code_ts
         }
     })
 }
@@ -675,33 +652,3 @@ pub fn create_settings_schema_fn_and_default_ty(input: TokenStream) -> TokenStre
         Err(e) => e,
     }
 }
-
-// Identifiers:
-// Name assigned to field or variant, maintaning case.
-// When writing localized strings, an identifier must be written after its parent or other ancestors
-// if there are naming collisions. In case a branch is used multiple times and a field in it must
-// have different localized strings, the path must be as long as the identifiers do not collide. The
-// identifier with the longer path has the precedence.
-// Newtype structs and variants with more than one unnamed field are not supported
-//
-//
-// GUI modifiers:
-// min, max, step, gui are allowed for UnsignedInteger and Float
-// gui can be either textbox, updown or slider.
-//
-// Defaults for UnsignedInteger:
-// min: <type>::MIN, where type is u8, u32 or u64
-// max: <type>::MAX, where type is u8, u32 or u64
-// step: 1
-// gui: textbox
-//
-// Defaults for Float
-// min: None
-// max: None
-// step: None
-// gui: if min, max, step are set: slider
-//      else if step is set: updown
-//      else: textbox
-//
-// Note: GUI modifiers can be applied to Arrays, Vector, Dictionary if its value type is
-// UnsignedInteger or Float

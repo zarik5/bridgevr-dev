@@ -1,9 +1,0 @@
-{
-    "openvr": {
-        "tracked_devices": [
-            {
-                "device_type": "HMD"
-            }
-        ]
-    }
-}
