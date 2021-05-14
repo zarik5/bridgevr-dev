@@ -1,7 +1,7 @@
 [package]
 name = 'openvr-driver-sys'
 version = '1.10.30-update.0'
-authors = ['Riccardo Zaglia <github.com/zarik5>']
+authors = ['Riccardo Zaglia <github.com/Riccardo Zaglia>']
 license = 'MIT'
 edition = '2018'
 

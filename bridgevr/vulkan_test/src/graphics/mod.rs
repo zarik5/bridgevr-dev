@@ -54,7 +54,7 @@ pub struct PipelineDesc {
     group_count: (u32, u32),
 }
 
-pub struct AdditionalPipelineData {
+pub struct PipelineExecutionData {
     push_constant_buffer: Vec<u8>,
 }
 
@@ -222,7 +222,7 @@ impl ComputeBuffer {
     // Any invalid usage can result in a crash.
     pub unsafe fn record_and_execute(
         &self,
-        additional_data: Vec<AdditionalPipelineData>,
+        execution_data: Vec<PipelineExecutionData>,
     ) -> StrResult {
         let dev = &self.graphics_context.device;
 

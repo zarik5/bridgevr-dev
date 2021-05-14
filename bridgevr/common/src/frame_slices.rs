@@ -11,7 +11,7 @@ pub struct SlicesDesc {
 // possible to squares. Maximizing the area/perimeter ratio, I minimize the probability that objects
 // in the scene enter or exit the slice, so it uses less bandwidth.
 pub fn slices_desc_from_count(count: usize, (frame_width, frame_height): (u32, u32)) -> SlicesDesc {
-    let mut min_ratio_score = std::f32::MAX; // distance from 1
+    let mut min_ratio_score = f32::MAX; // distance from 1
     let mut best_slices_desc = SlicesDesc {
         single_resolution: (frame_width, frame_height),
         horizontal_count: 1,

@@ -99,8 +99,8 @@ fn begin_server_loop(// graphics: Arc<GraphicsContext>,
     //                 FrameSize::Scale(scale) => {
     //                     let (native_eye_width, native_eye_height) =
     //                         client_handshake_packet.native_eye_resolution;
-    //                     let width = (native_eye_width as f32 * *scale) as _;
-    //                     let height = (native_eye_height as f32 * *scale) as _;
+    //                     let width = (native_eye_width as f32 * scale) as _;
+    //                     let height = (native_eye_height as f32 * scale) as _;
     //                     (width, height)
     //                 }
     //                 FrameSize::Absolute(width, height) => (*width, *height),

@@ -1,7 +1,7 @@
 #![allow(clippy::large_enum_variant)]
 
-mod settings;
 mod constants;
+mod settings;
 
 use crate::*;
 use bitflags::bitflags;
@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json as json;
 use std::{fs, hash::*, path::*};
 
-pub use settings::*;
 pub use constants::*;
+pub use settings::*;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct MotionSample3DofDesc {

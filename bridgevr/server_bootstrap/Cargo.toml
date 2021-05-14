@@ -1,7 +1,7 @@
 [package]
 name = 'bridgevr_server_bootstrap'
 version = '0.0.0'
-authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
+authors = ['Riccardo Zaglia <riccardo.zaglia5@gmail.com>']
 license = 'MIT'
 edition = '2018'
 

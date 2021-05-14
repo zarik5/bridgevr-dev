@@ -1,18 +1,18 @@
 [package]
 name = 'bridgevr_common'
 version = '0.1.0-alpha.0'
-authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
-license = 'MIT'
+authors = ['Riccardo Zaglia <riccardo.zaglia5@gmail.com>']
 edition = '2018'
 
 
 [dependencies]
 semver = '0.9.0'
-settings-schema = { path = '../../settings-schema' }
+# settings-schema = { git = 'https://github.com/zarik5/settings-schema-rs' }
+settings-schema = { path = '../../../../settings-schema-rs/settings-schema' }
 parking_lot = '0.10.2' # Mutex
 bitflags = '1.2'
 backtrace = '0.3.46'
-safe-transmute = '0.11.0-rc.2'
+safe-transmute = '0.11.0-rc.2' # todo: consider zero-copy
 log = '0.4.8'
 serde = { version = '1.0', features = ['derive'] }
 serde_json = '1.0' # De/serialization for settings
@@ -20,14 +20,14 @@ bincode = '1.2' # De/serialization for packets
 statrs = '0.12.0' # Statistical utlities
 gfx-hal = '0.5.0' # Graphics
 # requires FFMPEG_DIR env var on windows
-stainless-ffmpeg-sys = '4.2.2-update.1' # Video encoder
+# stainless-ffmpeg-sys = '4.2.2-update.1' # Video encoder
 cpal = '0.11.0' # Audio
 laminar = '0.3.2' # Network protocol
 crossbeam-channel = '0.3' # upgrade blocked by laminar leak
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # WARNING: any version change can create undefined behaviour
-gfx-backend-vulkan = '0.5.2'
+gfx-backend-vulkan = '0.5.6'
 ash = '0.30.0'
 
 [target.'cfg(windows)'.dependencies]

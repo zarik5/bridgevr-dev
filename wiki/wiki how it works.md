@@ -13,7 +13,7 @@ The most important libraries used by BridgeVR are:
 * [CPAL](https://github.com/RustAudio/cpal) and [Oboe](https://github.com/google/oboe) for audio recording/playback.
 * [android-glue](https://github.com/rust-windowing/android-rs-glue) for writing all Rust android app.
 * [OpenVR](https://github.com/ValveSoftware/openvr) driver as the VR server (through a custom wrapper and FFI bindings). BridgeVR implements both DirectModeDriver interface (the one used by ALVR) and VirtualDisplay interface.
-* [OpenXR](https://www.khronos.org/openxr/) as an alternative VR client (limited support). This allows BridgeVR to potentially support an increasing number of VR headsets.
+* [OpenXR](https://www.khronos.org/openxr/) as an alternative VR client. This allows BridgeVR to potentially support an increasing number of VR headsets.
 * [Flutter](https://github.com/flutter-rs/flutter-rs) for the GUI.
 
 ## Client-server communication

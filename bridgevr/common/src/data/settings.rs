@@ -1,7 +1,7 @@
 use crate::*;
 use serde::{Deserialize, Serialize};
 use settings_schema::{
-    DictionaryDefault, OptionalDefault, SettingsSchema, Switch, SwitchDefault, VectorDefault,
+    DictionaryDefault, OptionalDefault, SettingsSchema, Switch, SwitchDefault, VectorDefault, EntryData,
 };
 use std::{fs, path::*};
 

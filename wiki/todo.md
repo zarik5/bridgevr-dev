@@ -3,15 +3,13 @@
 ## alpha todo
 
 * rendering (gfx)
-* nvenc
+* ffmpeg encoder and decoder
 * server compositor shaders
 * client main loop
 * client compositor
-* openxr/oculus mobile sdk
+* openxr
 * ffr
 * basic GUI (settings text editor + log viewer)
-* debugging
-* gstreamer
 
 ## beta todo
 
@@ -25,3 +23,7 @@
 
 * VD disables chaperone by instructing the user to set to standing only. ? there are related properties in openvr_driver.h. try sending events with VendorSpecificEvent
 * wifi scanning causes lag spikes, it can be disabled: https://discordapp.com/channels/564087419918483486/591477838377648140/694330716346908694
+
+
+
+ 

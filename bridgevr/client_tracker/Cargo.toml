@@ -1,13 +1,12 @@
 [package]
 name = 'bridgevr_client_tracker'
 version = '0.0.0'
-authors = ['zarik5 <riccardo.zaglia5@gmail.com>']
-license = 'MIT'
+authors = ['Riccardo Zaglia <riccardo.zaglia5@gmail.com>']
 edition = '2018'
 
 [package.metadata.android]
 label = 'BridgeVR tracker'
-package_name = 'bvr.bridgevr.client_tracker'
+package_name = 'com.bridgevr.client_tracker'
 version_name = '0.1.0-alpha.0'
 version_code = 1
 android_version = 29

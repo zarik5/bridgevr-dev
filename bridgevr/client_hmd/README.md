@@ -1,16 +1,27 @@
 # Build instructions
 
-## Ubuntu
+## Install Android SDK and NDK
 
-Download and unzip the [NDK](https://developer.android.com/ndk/downloads)
+The easiest way is to install Android Studio (I had some problems using the command line tools).  
+By default the latest android SDK is installed.  
+The NDK is installed by going to Configure -> SDK Manager -> SDK Tools, select NDK then Apply.
 
-Append to `~/.profile`:
+Export `ANDROID_HOME` and `NDK_HOME` environment variables:
 
-```
-export ANDROID_NDK_HOME='path/to/ndk/'
-```
+* On Linux, append to `~/.profile`:
 
-Append to `~/.cargo/config` (or create the file):
+    ```
+    export ANDROID_HOME="$HOME/Android/Sdk"
+    export NDK_HOME="$HOME/Android/Sdk/ndk/<version>/"
+    ```
+
+* On Windows, on environment variables set `ANDROID_HOME=C:\Users\<user>\Android\Sdk\ndk\<version>`
+
+(You need to replace `<...>` accordingly)
+
+## Setup cargo for android
+
+Append to `~/.cargo/config` (or `C:\Users\<user>\.cargo\config`) (or create the file):
 
 ```
 [target.aarch64-linux-android]

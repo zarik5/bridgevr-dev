@@ -61,14 +61,6 @@ impl Sandbox for Gui {
     type Message = Event;
 
     fn new() -> Self {
-        // Self {
-        //     // scroll_state: <_>::default(),
-        //     // json_string: serde_json::to_string_pretty(
-        //     //     &serde_json::from_str::<serde_json::Value>(SETTINGS_SCHEMA).unwrap(),
-        //     // )
-        //     // .unwrap(),
-        // }
-        // todo!()
         Self {
             selected_tab: Tab::Monitor,
             monitor_mode: MonitorMode::Events,
@@ -92,11 +84,7 @@ impl Sandbox for Gui {
         match event {
             Event::MessageBoxOk => {
                 settings::generate_default_settings();
-                std::fs::write(
-                    "./settings.json",
-                    settings::generate_default_settings()
-                )
-                .unwrap();
+                std::fs::write("./settings.json", settings::generate_default_settings()).unwrap();
             }
             Event::MessageBoxCancel => (),
             _ => (),
